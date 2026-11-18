@@ -59,6 +59,7 @@ deterministic tests of agent factories, harnesses and anything else that drives 
 | opencode | Chat Completions, Anthropic Messages, DeepSeek provider | 1.19.6 | header | 7 of 7 per protocol |
 | pi coding agent | Chat Completions, Responses, Anthropic Messages, Gemini | 0.73.1 | header | 7 of 7 per protocol |
 | Gemini CLI | Gemini | 0.68.0 | header (`GEMINI_CLI_CUSTOM_HEADERS`) | 7 of 7 |
+| Google Antigravity CLI (`agy`) | Gemini (`modelProvider: gemini`) | 1.5.11 | prompt marker | 7 of 7 |
 | DeepSeek API users | Chat Completions at `/chat/completions`, Anthropic at `/anthropic/v1/messages` | (no official DeepSeek harness exists) | as the harness | opencode's `deepseek` provider: 7 of 7; Claude Code at `/anthropic`: covered |
 
 The seven e2e tests per harness: a text answer, a tool loop that edits a real file, a branch on
@@ -119,6 +120,7 @@ What it sets up, per harness (never your own config: the home folder is new):
 | opencode | `OPENCODE_CONFIG` file: an `@ai-sdk/openai-compatible` provider with `baseURL = URL/v1`, the built-in `anthropic` and `deepseek` providers with `baseURL`, headers with the session, permissions allowed | `opencode run --format json --model understudy/fake-chat` (or `anthropic/fake-claude`, `deepseek/deepseek-chat`) |
 | pi | `PI_CODING_AGENT_DIR/models.json`: one provider per API (`openai-completions`, `openai-responses`, `anthropic-messages`, `google-generative-ai`) with `baseUrl` and headers | `pi -p --mode json --model us-chat/fake-chat` (or `us-responses/...`, `us-anthropic/...`, `us-gemini/...`) |
 | Gemini CLI | `GOOGLE_GEMINI_BASE_URL=URL`, `GEMINI_API_KEY` dummy, `settings.json` with `selectedType: gemini-api-key` and folder trust off, `GEMINI_CLI_CUSTOM_HEADERS` with the session | `gemini -p ... --output-format stream-json --yolo --model gemini-3.1-pro-preview` |
+| Antigravity | `settings.json` with `modelProvider: gemini` (without it `GEMINI_API_KEY` is ignored), `GOOGLE_GEMINI_BASE_URL=URL`, `AGY_CLI_DISABLE_AUTO_UPDATE` | `agy -p ... --output-format stream-json --dangerously-skip-permissions`; the session marker goes into the prompt |
 
 Side requests are answered without the script and logged with `aux`: opencode's title request,
 Gemini CLI's routing request (sent when no `--model` is given).
@@ -462,6 +464,7 @@ machine. 19 requests, all served, none diverged.
 | opencode | 1.19.6 | npm `opencode-ai` | 7/7 over Chat Completions, Anthropic and its DeepSeek provider | 2026-11-18 |
 | pi | 0.73.1 | npm `@mariozechner/pi-coding-agent` | 7/7 over Chat Completions, Responses, Anthropic and Gemini | 2026-11-18 |
 | Gemini CLI | 0.68.0 | npm `@google/gemini-cli` | 7/7 | 2026-11-18 |
+| Antigravity CLI | 1.5.11 | Google's release tarball (the Homebrew cask's URL and checksum) | 7/7 | 2026-11-18 |
 
 All were installed into a private prefix, run with fresh home folders and dummy keys, and never
 signed in.

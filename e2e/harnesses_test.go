@@ -41,6 +41,7 @@ var subjects = []subject{
 	{"pi-anthropic", harness.Pi, protocol.Anthropic, "", "You have reached your weekly usage limit", 4},
 	{"pi-gemini", harness.Pi, protocol.Gemini, "", "You exceeded your current quota", 4},
 	{"gemini-cli", harness.GeminiCLI, protocol.Gemini, "", "You exceeded your current quota", 1},
+	{"antigravity", harness.Antigravity, protocol.Gemini, "", "RESOURCE_EXHAUSTED", 1},
 }
 
 func only(t *testing.T) []subject {
