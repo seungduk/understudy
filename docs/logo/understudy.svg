@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="64" fill="#ffe9c7"/>
+  <!-- stand-in twin, dashed, peeking behind -->
+  <circle cx="160" cy="112" r="62" fill="none" stroke="#f59e7a" stroke-width="8" stroke-dasharray="12 10"/>
+  <!-- friendly character -->
+  <circle cx="112" cy="132" r="72" fill="#ff8a65"/>
+  <ellipse cx="88" cy="122" rx="11" ry="14" fill="#3b2a24"/>
+  <ellipse cx="136" cy="122" rx="11" ry="14" fill="#3b2a24"/>
+  <circle cx="92" cy="117" r="4" fill="#fff"/>
+  <circle cx="140" cy="117" r="4" fill="#fff"/>
+  <ellipse cx="72" cy="150" rx="10" ry="6" fill="#ff6f61" opacity="0.7"/>
+  <ellipse cx="152" cy="150" rx="10" ry="6" fill="#ff6f61" opacity="0.7"/>
+  <path d="M98 152 Q112 166 126 152" stroke="#3b2a24" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <!-- script page in hand -->
+  <g transform="rotate(-8 186 184)">
+    <rect x="160" y="150" width="56" height="70" rx="8" fill="#ffffff" stroke="#3b2a24" stroke-width="5"/>
+    <rect x="170" y="166" width="36" height="5" rx="2.5" fill="#3b2a24"/>
+    <rect x="170" y="180" width="28" height="5" rx="2.5" fill="#3b2a24" opacity="0.6"/>
+    <rect x="170" y="194" width="32" height="5" rx="2.5" fill="#3b2a24" opacity="0.6"/>
+  </g>
+</svg>
