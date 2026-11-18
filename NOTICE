@@ -1,0 +1,24 @@
+understudy
+Copyright 2026 Seungduk Kim
+
+This product is licensed under the Apache License, Version 2.0 (LICENSE).
+
+It contains no code copied from other projects. Its design learned from these
+projects, credited here; no license notice is required for ideas, and none of
+their code is included:
+
+- AkaraChen/fakellm (MIT): SSE event order, measured Claude Code behaviour, stateless
+  conversation position.
+- majorcontext/harness (MIT): block/release gates.
+- acus9345/mock-llm-server (MIT): the reply model.
+- piyook/llm-mock (MIT), theblixguy/llm-mock-server (MIT), kagent-dev/mockllm (Apache-2.0):
+  fault and matching vocabularies.
+- sloprail/harness-mocks (MIT): recorded Claude Code runs as a testing idea.
+
+The transcripts in record/testdata were recorded by the author from Claude Code 2.1.325
+running against understudy itself, with paths replaced.
+
+Dependency: gopkg.in/yaml.v3 (MIT and Apache-2.0).
+
+"Claude" and "Anthropic" are trademarks of Anthropic, PBC. understudy is not
+affiliated with or endorsed by Anthropic.

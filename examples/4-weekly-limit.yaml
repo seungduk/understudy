@@ -1,0 +1,7 @@
+schema: understudy/v1
+sessions:
+  t3/writer:
+    steps:
+      - name: first
+        reply:
+          limit: {window: seven_day, resets_in_seconds: 7200}

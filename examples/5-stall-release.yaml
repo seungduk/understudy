@@ -1,0 +1,8 @@
+schema: understudy/v1
+sessions:
+  t4/reviewer:
+    steps:
+      - name: verdict
+        reply:
+          message: {text: "CAUSE: WORK"}
+          stall: {gate: reviewer-gate}

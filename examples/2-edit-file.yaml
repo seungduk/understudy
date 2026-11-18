@@ -1,0 +1,21 @@
+schema: understudy/v1
+sessions:
+  t1/writer:
+    steps:
+      - name: read
+        reply:
+          tool_use:
+            text: Reading the file first.
+            calls:
+              - {tool: Read, input: {file_path: "{{cwd}}/greeting.txt"}}
+      - name: edit
+        expect: {tool: Read, result: ok}
+        reply:
+          tool_use:
+            calls:
+              - tool: Edit
+                input: {file_path: "{{cwd}}/greeting.txt", old_string: "hello", new_string: "goodbye"}
+      - name: done
+        expect: {tool: Edit, result: ok}
+        reply:
+          message: {text: "DONE: greeting.txt now says goodbye"}

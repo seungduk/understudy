@@ -1,0 +1,227 @@
+// Package script is the understudy script format: YAML files (schema
+// understudy/v1) that say, per session, what the fake model replies at each turn.
+//
+// A File is the plain data an agent writes; Compile checks it and gives a
+// Script, the only form the server runs. Parse and Load read YAML (or JSON,
+// which is YAML too) and refuse unknown fields with fix-it problems.
+package script
+
+// SchemaV1 is the only schema version this package reads.
+const SchemaV1 = "understudy/v1"
+
+// File is one script file, exactly as written.
+type File struct {
+	Schema     string             `yaml:"schema" json:"schema"`
+	Divergence Divergence         `yaml:"divergence,omitempty" json:"divergence,omitempty"`
+	Provenance *Provenance        `yaml:"provenance,omitempty" json:"provenance,omitempty"`
+	Sessions   map[string]Session `yaml:"sessions" json:"sessions"`
+}
+
+// Divergence says what happens when a request does not fit the script: a step's
+// expect fails, no case matches, a tool is not offered, or the script has ended.
+type Divergence string
+
+const (
+	// Strict answers the diverging request with a 400 error that names the
+	// divergence and tells the client not to retry, so the run stops there.
+	Strict Divergence = "strict"
+	// Lenient logs the divergence and goes on: a failed expect is ignored, no
+	// matching case takes the step's first case, a script that has ended repeats
+	// its last step's reply.
+	Lenient Divergence = "lenient"
+)
+
+// Provenance says where a script came from.
+type Provenance struct {
+	Source     Source `yaml:"source" json:"source"`
+	Run        string `yaml:"run,omitempty" json:"run,omitempty"`
+	Task       string `yaml:"task,omitempty" json:"task,omitempty"`
+	Seat       string `yaml:"seat,omitempty" json:"seat,omitempty"`
+	Session    string `yaml:"session,omitempty" json:"session,omitempty"`
+	RecordedAt string `yaml:"recorded_at,omitempty" json:"recorded_at,omitempty"`
+	CLIVersion string `yaml:"cli_version,omitempty" json:"cli_version,omitempty"`
+	Note       string `yaml:"note,omitempty" json:"note,omitempty"`
+}
+
+// Source is how a script was made.
+type Source string
+
+const (
+	Written  Source = "written"
+	Recorded Source = "recorded"
+)
+
+// Session is the ordered steps of one session. Step i answers the request whose
+// history holds i assistant turns, unless a next jump moved the position.
+type Session struct {
+	Steps []Step `yaml:"steps" json:"steps"`
+}
+
+// Step answers one turn. It has exactly one of Reply, Attempts or Cases.
+type Step struct {
+	Name     string   `yaml:"name" json:"name"`
+	Expect   *Matcher `yaml:"expect,omitempty" json:"expect,omitempty"`
+	Reply    *Reply   `yaml:"reply,omitempty" json:"reply,omitempty"`
+	Attempts []Reply  `yaml:"attempts,omitempty" json:"attempts,omitempty"`
+	Next     string   `yaml:"next,omitempty" json:"next,omitempty"`
+	Cases    []Case   `yaml:"cases,omitempty" json:"cases,omitempty"`
+	// Otherwise answers when no case matches. Without it, no match is a divergence.
+	Otherwise *Branch `yaml:"otherwise,omitempty" json:"otherwise,omitempty"`
+}
+
+// Case is one branch of a step: the first case whose When matches answers.
+type Case struct {
+	When     *Matcher `yaml:"when" json:"when"`
+	Reply    *Reply   `yaml:"reply,omitempty" json:"reply,omitempty"`
+	Attempts []Reply  `yaml:"attempts,omitempty" json:"attempts,omitempty"`
+	Next     string   `yaml:"next,omitempty" json:"next,omitempty"`
+}
+
+// Branch is what a step answers: exactly one of Reply or Attempts, then Next.
+type Branch struct {
+	Reply    *Reply  `yaml:"reply,omitempty" json:"reply,omitempty"`
+	Attempts []Reply `yaml:"attempts,omitempty" json:"attempts,omitempty"`
+	Next     string  `yaml:"next,omitempty" json:"next,omitempty"`
+}
+
+// Matcher tests the tool results that the request carries (the results of the
+// previous turn's tool calls). Every given field must hold for the same result;
+// the matcher matches when any result passes. At least one field is required.
+type Matcher struct {
+	Tool     string  `yaml:"tool,omitempty" json:"tool,omitempty"`
+	Result   Outcome `yaml:"result,omitempty" json:"result,omitempty"`
+	ExitCode *int    `yaml:"exit_code,omitempty" json:"exit_code,omitempty"`
+	Contains string  `yaml:"contains,omitempty" json:"contains,omitempty"`
+	Regex    string  `yaml:"regex,omitempty" json:"regex,omitempty"`
+}
+
+// Outcome is whether a tool result is an error.
+type Outcome string
+
+const (
+	OK    Outcome = "ok"
+	Error Outcome = "error"
+)
+
+// Reply is one answer of the fake model. It has exactly one kind (Message,
+// ToolUse, HTTPError, StreamError, Limit) and optional delivery faults.
+type Reply struct {
+	Message     *Message     `yaml:"message,omitempty" json:"message,omitempty"`
+	ToolUse     *ToolUse     `yaml:"tool_use,omitempty" json:"tool_use,omitempty"`
+	HTTPError   *HTTPError   `yaml:"http_error,omitempty" json:"http_error,omitempty"`
+	StreamError *StreamError `yaml:"stream_error,omitempty" json:"stream_error,omitempty"`
+	Limit       *Limit       `yaml:"limit,omitempty" json:"limit,omitempty"`
+
+	Stall *Stall `yaml:"stall,omitempty" json:"stall,omitempty"`
+	Cut   *Cut   `yaml:"cut,omitempty" json:"cut,omitempty"`
+	Pace  *Pace  `yaml:"pace,omitempty" json:"pace,omitempty"`
+}
+
+// Message is a final answer: the model's turn ends.
+type Message struct {
+	Thinking string `yaml:"thinking,omitempty" json:"thinking,omitempty"`
+	Text     string `yaml:"text" json:"text"`
+	Stop     Stop   `yaml:"stop,omitempty" json:"stop,omitempty"`
+}
+
+// Stop is why a final message ended.
+type Stop string
+
+const (
+	EndTurn   Stop = "end_turn"
+	MaxTokens Stop = "max_tokens"
+)
+
+// ToolUse is a turn that calls tools; the client runs them and sends the results.
+type ToolUse struct {
+	Thinking string `yaml:"thinking,omitempty" json:"thinking,omitempty"`
+	Text     string `yaml:"text,omitempty" json:"text,omitempty"`
+	Calls    []Call `yaml:"calls" json:"calls"`
+}
+
+// Call is one tool call. Input is the tool's input object, sent as written;
+// the text {{cwd}} in any string of it becomes the client's working directory.
+type Call struct {
+	Tool  string         `yaml:"tool" json:"tool"`
+	Input map[string]any `yaml:"input" json:"input"`
+}
+
+// HTTPError answers with an HTTP error status and the real API's error body.
+type HTTPError struct {
+	Error             string `yaml:"error" json:"error"`
+	Message           string `yaml:"message,omitempty" json:"message,omitempty"`
+	RetryAfterSeconds *int   `yaml:"retry_after_seconds,omitempty" json:"retry_after_seconds,omitempty"`
+	Retry             Retry  `yaml:"retry,omitempty" json:"retry,omitempty"`
+}
+
+// Retry is the x-should-retry header the error carries.
+type Retry string
+
+const (
+	RetryDefault Retry = "default" // no header: the client decides by status
+	RetryNever   Retry = "never"   // x-should-retry: false
+	RetryAlways  Retry = "always"  // x-should-retry: true
+)
+
+// StreamError starts a 200 stream, optionally streams partial text, then sends
+// an in-stream "event: error" and ends without message_stop.
+type StreamError struct {
+	Error       string `yaml:"error" json:"error"`
+	Message     string `yaml:"message,omitempty" json:"message,omitempty"`
+	PartialText string `yaml:"partial_text,omitempty" json:"partial_text,omitempty"`
+}
+
+// Limit answers as a subscription account's usage limit does: a 429 with the
+// unified rate-limit headers. See the README for which client settings make
+// Claude Code show it as "You've hit your weekly limit".
+type Limit struct {
+	Window          Window `yaml:"window" json:"window"`
+	ResetsInSeconds int    `yaml:"resets_in_seconds" json:"resets_in_seconds"`
+}
+
+// Window is the usage window that ran out.
+type Window string
+
+const (
+	FiveHour       Window = "five_hour"
+	SevenDay       Window = "seven_day"
+	SevenDayOpus   Window = "seven_day_opus"
+	SevenDaySonnet Window = "seven_day_sonnet"
+)
+
+// Stall holds the reply: for Seconds, or until the named Gate is released
+// through the control API. Exactly one of Seconds or Gate.
+type Stall struct {
+	Seconds int     `yaml:"seconds,omitempty" json:"seconds,omitempty"`
+	Gate    string  `yaml:"gate,omitempty" json:"gate,omitempty"`
+	At      StallAt `yaml:"at,omitempty" json:"at,omitempty"`
+}
+
+// StallAt is where the stall happens.
+type StallAt string
+
+const (
+	BeforeResponse StallAt = "before_response" // before any byte of the response
+	MidStream      StallAt = "mid_stream"      // after message_start and the first content event
+)
+
+// Cut ends the connection after AfterEvents SSE events (0: before the response
+// headers). Close ends it cleanly (FIN); Reset aborts it (TCP RST).
+type Cut struct {
+	AfterEvents int    `yaml:"after_events" json:"after_events"`
+	How         CutHow `yaml:"how" json:"how"`
+}
+
+// CutHow is how a cut ends the connection.
+type CutHow string
+
+const (
+	Close CutHow = "close"
+	Reset CutHow = "reset"
+)
+
+// Pace slows a reply: FirstEventMS before the first byte, BetweenEventsMS between events.
+type Pace struct {
+	FirstEventMS    int `yaml:"first_event_ms,omitempty" json:"first_event_ms,omitempty"`
+	BetweenEventsMS int `yaml:"between_events_ms,omitempty" json:"between_events_ms,omitempty"`
+}

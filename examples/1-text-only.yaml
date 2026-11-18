@@ -1,0 +1,9 @@
+schema: understudy/v1
+sessions:
+  default:
+    steps:
+      - name: answer
+        reply:
+          message:
+            thinking: The user wants a short plan.
+            text: "PLAN: 1. read main.go 2. fix the bug 3. run go test"

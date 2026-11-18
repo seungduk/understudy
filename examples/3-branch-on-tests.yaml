@@ -1,0 +1,20 @@
+schema: understudy/v1
+sessions:
+  t2/writer:
+    steps:
+      - name: test
+        reply:
+          tool_use:
+            calls: [{tool: Bash, input: {command: "go test ./...", description: Run the tests}}]
+      - name: judge
+        cases:
+          - when: {tool: Bash, exit_code: 0}
+            reply: {message: {text: "DONE: tests pass"}}
+          - when: {tool: Bash, result: error, contains: FAIL}
+            next: test
+            reply:
+              tool_use:
+                calls:
+                  - {tool: Write, input: {file_path: "{{cwd}}/fix.go", content: "package main\n"}}
+        otherwise:
+          reply: {message: {text: "blocked: go test did not run"}}
