@@ -216,6 +216,22 @@ func TestClientEnv(t *testing.T) {
 	if _, isErr := r.call("client_env", map[string]any{"auth": "oauth"}); !isErr {
 		t.Fatal("bad auth is refused by the schema")
 	}
+	// Another harness: its config is written into a fresh home, and the command runs it there.
+	t.Setenv("UNDERSTUDY_PI", "/opt/pi")
+	out, isErr = r.call("client_env", map[string]any{"harness": "pi", "protocol": "gemini", "session": "t1/writer", "dir": "/work"})
+	if env, _ := out["env"].(map[string]any); isErr || !strings.Contains(out["command"].(string), "'/opt/pi' '-p' '--mode' 'json' '--model' 'us-gemini/fake-gemini'") ||
+		env["PI_CODING_AGENT_DIR"] == nil || !strings.Contains(out["note"].(string), "/work") {
+		t.Fatal(out)
+	}
+	models, err := os.ReadFile(out["env"].(map[string]any)["PI_CODING_AGENT_DIR"].(string) + "/models.json")
+	if err != nil || !strings.Contains(string(models), r.url+"/v1beta") || !strings.Contains(string(models), "t1/writer") {
+		t.Fatal(err, string(models))
+	}
+	for _, bad := range []map[string]any{{"harness": "nope"}, {"harness": "codex", "protocol": "gemini"}} {
+		if _, isErr := r.call("client_env", bad); !isErr {
+			t.Fatal(bad)
+		}
+	}
 }
 
 func TestSessionsLogExplainReleaseReset(t *testing.T) {

@@ -11,16 +11,15 @@ import (
 	"github.com/seungduk/understudy/internal/clock"
 	"github.com/seungduk/understudy/internal/gate"
 	"github.com/seungduk/understudy/internal/reqlog"
-	"github.com/seungduk/understudy/internal/wire"
 )
 
-// Plan is one reply, ready to send. Exactly one of Events (a 200 SSE stream)
-// or Body (a JSON response with Status) is set.
+// Plan is one reply, ready to send. Exactly one of Frames (a 200 SSE stream,
+// each frame already encoded by its protocol) or Body (a response with Status) is set.
 type Plan struct {
 	Status  int
 	Headers http.Header
 	Body    []byte
-	Events  []wire.Event
+	Frames  [][]byte
 
 	StallFor  time.Duration // a timed stall, or
 	StallGate string        // a gated stall
@@ -70,7 +69,7 @@ func Send(ctx context.Context, w http.ResponseWriter, p Plan, d Deps) reqlog.Out
 	if p.Cut && p.CutAfter == 0 {
 		return cut(w, p.CutReset)
 	}
-	if p.Events == nil {
+	if p.Frames == nil {
 		return sendBody(w, p)
 	}
 	h := w.Header()
@@ -83,13 +82,13 @@ func Send(ctx context.Context, w http.ResponseWriter, p Plan, d Deps) reqlog.Out
 	rc := http.NewResponseController(w)
 	cutAt := -1
 	if p.Cut {
-		cutAt = min(p.CutAfter, len(p.Events)-1)
+		cutAt = min(p.CutAfter, len(p.Frames)-1)
 	}
 	midAt := -1
 	if p.StallMid {
-		midAt = min(2, len(p.Events)-1)
+		midAt = min(2, len(p.Frames)-1)
 	}
-	for i, e := range p.Events {
+	for i, e := range p.Frames {
 		if i == cutAt {
 			return cut(w, p.CutReset)
 		}
@@ -99,7 +98,7 @@ func Send(ctx context.Context, w http.ResponseWriter, p Plan, d Deps) reqlog.Out
 		if i > 0 && p.Between > 0 && d.Clock.Sleep(ctx, p.Between) != nil {
 			return reqlog.ClientGone
 		}
-		if _, err := w.Write(e.Encode()); err != nil {
+		if _, err := w.Write(e); err != nil {
 			return reqlog.ClientGone
 		}
 		if err := rc.Flush(); err != nil {
@@ -114,7 +113,9 @@ func sendBody(w http.ResponseWriter, p Plan) reqlog.Outcome {
 	for k, v := range p.Headers {
 		h[k] = v
 	}
-	h.Set("Content-Type", "application/json")
+	if h.Get("Content-Type") == "" {
+		h.Set("Content-Type", "application/json")
+	}
 	body := p.Body
 	if p.Cut {
 		// After the headers and half of the body.

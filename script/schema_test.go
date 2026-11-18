@@ -10,7 +10,20 @@ import (
 	"testing"
 )
 
+// v2Only are the fields understudy/v1 does not have, per shape.
+var v2Only = map[string][]string{"file": {"harness"}, "session": {"harness"}, "matcher": {"action"}, "call": {"shell", "read", "write", "edit"},
+	"shell": nil, "read": nil, "write": nil, "edit": nil}
+
 func TestSchemaMatchesFormat(t *testing.T) {
+	checkSchema(t, SchemaJSON, func(string) []string { return nil }, false)
+}
+
+func TestSchemaV1MatchesFormat(t *testing.T) {
+	checkSchema(t, SchemaV1JSON, func(shape string) []string { return v2Only[shape] }, true)
+}
+
+func checkSchema(t *testing.T, data []byte, without func(shape string) []string, v1 bool) {
+	t.Helper()
 	var s struct {
 		Schema string `json:"$schema"`
 		ID     string `json:"$id"`
@@ -22,13 +35,16 @@ func TestSchemaMatchesFormat(t *testing.T) {
 			Required             []string                   `json:"required"`
 		} `json:"$defs"`
 	}
-	if err := json.Unmarshal(SchemaJSON, &s); err != nil {
+	if err := json.Unmarshal(data, &s); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(s.Schema, "2020-12") || s.Ref != "#/$defs/file" {
 		t.Fatal(s.Schema, s.Ref)
 	}
 	for name, fields := range shapes {
+		if only, ok := v2Only[name]; v1 && ok && only == nil {
+			continue // a shape v1 does not have
+		}
 		d, ok := s.Defs[name]
 		if !ok {
 			t.Errorf("schema has no $defs/%s", name)
@@ -38,8 +54,14 @@ func TestSchemaMatchesFormat(t *testing.T) {
 			t.Errorf("%s: additionalProperties must be false", name)
 		}
 		var want, got []string
+		skip := map[string]bool{}
+		for _, f := range without(name) {
+			skip[f] = true
+		}
 		for f := range fields {
-			want = append(want, f)
+			if !skip[f] {
+				want = append(want, f)
+			}
 		}
 		for f := range d.Properties {
 			got = append(got, f)
@@ -51,7 +73,7 @@ func TestSchemaMatchesFormat(t *testing.T) {
 		}
 	}
 	for name := range s.Defs {
-		if _, ok := shapes[name]; !ok && name != "errorKind" && name != "gateName" && name != "toolName" {
+		if _, ok := shapes[name]; !ok && name != "errorKind" && name != "gateName" && name != "toolName" && name != "harnessName" {
 			t.Errorf("schema has $defs/%s, which the format does not", name)
 		}
 	}

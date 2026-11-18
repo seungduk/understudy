@@ -16,7 +16,6 @@ import (
 
 	"github.com/seungduk/understudy/control"
 	"github.com/seungduk/understudy/mcpserver"
-	"github.com/seungduk/understudy/script"
 	"github.com/seungduk/understudy/server"
 	"github.com/seungduk/understudy/ui"
 )
@@ -138,7 +137,7 @@ func serverOptions(cmd, clk, file string, stderr io.Writer) (server.Options, int
 		return o, 2
 	}
 	if file != "" {
-		sc, err := script.Load(file)
+		sc, err := loadScript(file)
 		if err != nil {
 			fmt.Fprintf(stderr, "understudy %s: %s: %v\n", cmd, file, err)
 			return o, 1

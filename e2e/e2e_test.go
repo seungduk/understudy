@@ -351,3 +351,22 @@ func TestRecordAndReplay(t *testing.T) {
 		t.Fatalf("%+v\n%s", o, steps(es))
 	}
 }
+
+// DeepSeek's documented Claude Code setup points ANTHROPIC_BASE_URL at
+// https://api.deepseek.com/anthropic; understudy serves the same path.
+func TestAnthropicUnderPrefixAsDeepSeekUsers(t *testing.T) {
+	f := us.Start(t, us.YAML(toolLoop))
+	viaPrefix := &us.Fake{Server: f.Server, URL: f.URL + "/anthropic"}
+	dir := us.TempDir(t, map[string]string{"greeting.txt": "hello old world\n"})
+	o := us.Claude(t, viaPrefix, us.Run{Dir: dir, Session: "t1/writer", Prompt: "update the greeting"})
+	b, _ := os.ReadFile(filepath.Join(dir, "greeting.txt"))
+	if o.Exit != 0 || o.Result != "DONE: greeting updated" || string(b) != "hello new world\n" {
+		t.Fatalf("file %q, outcome %+v", b, o)
+	}
+	for _, e := range messages(f, "t1/writer") {
+		if !strings.HasPrefix(e.Path, "/anthropic/v1/messages") {
+			t.Fatalf("path %s", e.Path)
+		}
+	}
+	t.Logf("claude %s: tool loop through /anthropic ok", o.Version)
+}

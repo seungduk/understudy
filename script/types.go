@@ -4,17 +4,30 @@
 // A File is the plain data an agent writes; Compile checks it and gives a
 // Script, the only form the server runs. Parse and Load read YAML (or JSON,
 // which is YAML too) and refuse unknown fields with fix-it problems.
+//
+// The engine is protocol- and harness-neutral: it reads tool results as
+// core-level Results and answers with Replies; the server turns those into
+// each protocol's wire format and each harness's tools.
 package script
 
-// SchemaV1 is the only schema version this package reads.
-const SchemaV1 = "understudy/v1"
+// The schema versions this package reads. v1 is the first format (Claude Code
+// tool names only); v2 adds the harness field, neutral actions (shell, read,
+// write, edit) and the daily and per_minute limit windows. A v1 script means
+// exactly what it meant before.
+const (
+	SchemaV1 = "understudy/v1"
+	SchemaV2 = "understudy/v2"
+)
 
 // File is one script file, exactly as written.
 type File struct {
-	Schema     string             `yaml:"schema" json:"schema"`
-	Divergence Divergence         `yaml:"divergence,omitempty" json:"divergence,omitempty"`
-	Provenance *Provenance        `yaml:"provenance,omitempty" json:"provenance,omitempty"`
-	Sessions   map[string]Session `yaml:"sessions" json:"sessions"`
+	Schema     string      `yaml:"schema" json:"schema"`
+	Divergence Divergence  `yaml:"divergence,omitempty" json:"divergence,omitempty"`
+	Provenance *Provenance `yaml:"provenance,omitempty" json:"provenance,omitempty"`
+	// Harness (v2) names the harness every session runs in, such as codex; a
+	// session's own harness overrides it. "" lets the server tell from the request.
+	Harness  string             `yaml:"harness,omitempty" json:"harness,omitempty"`
+	Sessions map[string]Session `yaml:"sessions" json:"sessions"`
 }
 
 // Divergence says what happens when a request does not fit the script: a step's
@@ -54,7 +67,9 @@ const (
 // Session is the ordered steps of one session. Step i answers the request whose
 // history holds i assistant turns, unless a next jump moved the position.
 type Session struct {
-	Steps []Step `yaml:"steps" json:"steps"`
+	// Harness (v2) names the harness this session runs in.
+	Harness string `yaml:"harness,omitempty" json:"harness,omitempty"`
+	Steps   []Step `yaml:"steps" json:"steps"`
 }
 
 // Step answers one turn. It has exactly one of Reply, Attempts or Cases.
@@ -88,7 +103,9 @@ type Branch struct {
 // previous turn's tool calls). Every given field must hold for the same result;
 // the matcher matches when any result passes. At least one field is required.
 type Matcher struct {
-	Tool     string  `yaml:"tool,omitempty" json:"tool,omitempty"`
+	Tool string `yaml:"tool,omitempty" json:"tool,omitempty"`
+	// Action (v2) is the neutral action the result answers: shell, read, write or edit.
+	Action   string  `yaml:"action,omitempty" json:"action,omitempty"`
 	Result   Outcome `yaml:"result,omitempty" json:"result,omitempty"`
 	ExitCode *int    `yaml:"exit_code,omitempty" json:"exit_code,omitempty"`
 	Contains string  `yaml:"contains,omitempty" json:"contains,omitempty"`
@@ -139,11 +156,42 @@ type ToolUse struct {
 	Calls    []Call `yaml:"calls" json:"calls"`
 }
 
-// Call is one tool call. Input is the tool's input object, sent as written;
-// the text {{cwd}} in any string of it becomes the client's working directory.
+// Call is one tool call: either a native call (Tool and Input, sent as
+// written) or (v2) exactly one neutral action, which the harness profile turns
+// into its own tool call. The text {{cwd}} in any string becomes the client's
+// working directory.
 type Call struct {
-	Tool  string         `yaml:"tool" json:"tool"`
-	Input map[string]any `yaml:"input" json:"input"`
+	Tool  string         `yaml:"tool,omitempty" json:"tool,omitempty"`
+	Input map[string]any `yaml:"input,omitempty" json:"input,omitempty"`
+
+	Shell *ShellAction `yaml:"shell,omitempty" json:"shell,omitempty"`
+	Read  *ReadAction  `yaml:"read,omitempty" json:"read,omitempty"`
+	Write *WriteAction `yaml:"write,omitempty" json:"write,omitempty"`
+	Edit  *EditAction  `yaml:"edit,omitempty" json:"edit,omitempty"`
+}
+
+// ShellAction runs a shell command in the session's working directory.
+type ShellAction struct {
+	Command string `yaml:"command" json:"command"`
+}
+
+// ReadAction reads a file.
+type ReadAction struct {
+	Path string `yaml:"path" json:"path"`
+}
+
+// WriteAction creates or overwrites a file.
+type WriteAction struct {
+	Path    string `yaml:"path" json:"path"`
+	Content string `yaml:"content" json:"content"`
+}
+
+// EditAction replaces the text Old with New in a file. Old must occur once.
+// For harnesses whose only edit tool is a patch (Codex), Old and New are whole lines.
+type EditAction struct {
+	Path string `yaml:"path" json:"path"`
+	Old  string `yaml:"old" json:"old"`
+	New  string `yaml:"new" json:"new"`
 }
 
 // HTTPError answers with an HTTP error status and the real API's error body.
@@ -171,9 +219,10 @@ type StreamError struct {
 	PartialText string `yaml:"partial_text,omitempty" json:"partial_text,omitempty"`
 }
 
-// Limit answers as a subscription account's usage limit does: a 429 with the
-// unified rate-limit headers. See the README for which client settings make
-// Claude Code show it as "You've hit your weekly limit".
+// Limit answers as an account's usage limit does, in each protocol's own form
+// (Anthropic: a 429 with the unified rate-limit headers; OpenAI: a 429
+// usage_limit_reached; Gemini: a 429 RESOURCE_EXHAUSTED with quota details).
+// See the README for what each harness shows.
 type Limit struct {
 	Window          Window `yaml:"window" json:"window"`
 	ResetsInSeconds int    `yaml:"resets_in_seconds" json:"resets_in_seconds"`
@@ -187,6 +236,8 @@ const (
 	SevenDay       Window = "seven_day"
 	SevenDayOpus   Window = "seven_day_opus"
 	SevenDaySonnet Window = "seven_day_sonnet"
+	Daily          Window = "daily"      // v2: a per-day quota (Gemini requests per day)
+	PerMinute      Window = "per_minute" // v2: a per-minute rate limit that says when to retry
 )
 
 // Stall holds the reply: for Seconds, or until the named Gate is released

@@ -77,8 +77,8 @@ func SessionsOf(entries []Entry, sc *script.Script) []SessionStatus {
 		}
 	}
 	for _, e := range entries {
-		if e.Outcome == reqlog.Other || e.Session == "" {
-			continue
+		if e.Outcome == reqlog.Other || e.Session == "" || e.Aux != "" {
+			continue // other endpoints, and side requests (titles, routing) answered without the script
 		}
 		st := get(e.Session)
 		st.Requests++

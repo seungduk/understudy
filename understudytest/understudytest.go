@@ -38,7 +38,11 @@ func Script(s *script.Script) Option {
 func ScriptFile(path string) Option {
 	return func(t testing.TB, o *server.Options) {
 		t.Helper()
-		s, err := script.Load(path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("understudytest: %v", err)
+		}
+		s, err := server.Parse(data)
 		if err != nil {
 			t.Fatalf("understudytest: %s: %v", path, err)
 		}
@@ -50,7 +54,7 @@ func ScriptFile(path string) Option {
 func YAML(src string) Option {
 	return func(t testing.TB, o *server.Options) {
 		t.Helper()
-		s, err := script.Parse([]byte(src))
+		s, err := server.Parse([]byte(src))
 		if err != nil {
 			t.Fatalf("understudytest: %v", err)
 		}

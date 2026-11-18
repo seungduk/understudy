@@ -88,7 +88,7 @@ func (s *Server) putScript(w http.ResponseWriter, r *http.Request) {
 		controlError(w, 400, "cannot read the body", "send the script file as the body")
 		return
 	}
-	sc, err := script.Parse(data)
+	sc, err := Parse(data)
 	if err != nil {
 		var ps script.Problems
 		if errors.As(err, &ps) {

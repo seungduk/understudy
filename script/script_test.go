@@ -103,7 +103,7 @@ func TestFormatProblems(t *testing.T) {
 	}{
 		{"schema: [", "", RuleSyntax},
 		{"", "", RuleRequired},
-		{"schema: understudy/v2\nsessions: {default: {steps: [{name: a, reply: {message: {text: x}}}]}}", "schema", RuleSchema},
+		{"schema: understudy/v3\nsessions: {default: {steps: [{name: a, reply: {message: {text: x}}}]}}", "schema", RuleSchema},
 		{"sessions: {default: {steps: [{name: a, reply: {message: {text: x}}}]}}", "schema", RuleSchema},
 		{head + "      - name: a\n        replies: {message: {text: x}}\n", `sessions["default"].steps[0].replies`, RuleUnknownField},
 		{"schema: understudy/v1\nsessions: [a]", "sessions", RuleType},
@@ -243,5 +243,76 @@ func TestNames(t *testing.T) {
 	}
 	if closest("zzzzzz", []string{"reply"}) != "" {
 		t.Error("closest too far")
+	}
+}
+
+func TestV2Fields(t *testing.T) {
+	const v2 = "schema: understudy/v2\nharness: codex\nsessions:\n  s:\n    harness: pi\n    steps:\n"
+	src := v2 + `      - name: a
+        reply:
+          tool_use:
+            calls:
+              - shell: {command: "go test ./..."}
+              - read: {path: "{{cwd}}/a.txt"}
+              - write: {path: "{{cwd}}/b.txt", content: ""}
+              - edit: {path: "{{cwd}}/a.txt", old: x, new: ""}
+              - {tool: Bash, input: {command: ls}}
+      - name: b
+        cases:
+          - when: {action: shell, exit_code: 0}
+            reply: {limit: {window: daily, resets_in_seconds: 60}}
+        otherwise:
+          reply: {limit: {window: per_minute, resets_in_seconds: 5}}
+`
+	s, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Session("s")
+	if p.Harness() != "pi" || strings.Join(s.Harnesses(), ",") != "pi" {
+		t.Errorf("harness %q %v", p.Harness(), s.Harnesses())
+	}
+	s2, err := Parse([]byte("schema: understudy/v2\nharness: codex\nsessions: {a: {steps: [{name: x, reply: {message: {text: y}}}]}}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pa, _ := s2.Session("a"); pa.Harness() != "codex" {
+		t.Error(pa.Harness())
+	}
+	// Round trip through Marshal keeps the v2 fields.
+	b, err := Marshal(s.File())
+	if err != nil || !strings.Contains(string(b), "schema understudy/v2") {
+		t.Fatal(err, string(b))
+	}
+	if _, err := Parse(b); err != nil {
+		t.Fatalf("%v\n%s", err, b)
+	}
+
+	const v1 = "schema: understudy/v1\nsessions:\n  default:\n    steps:\n      - name: a\n"
+	const v2d = "schema: understudy/v2\nsessions:\n  default:\n    steps:\n      - name: a\n"
+	cases := []struct {
+		src  string
+		path string
+		rule Rule
+	}{
+		{"schema: understudy/v1\nharness: codex\nsessions: {default: {steps: [{name: a, reply: {message: {text: x}}}]}}", "harness", RuleSchema},
+		{"schema: understudy/v1\nsessions: {default: {harness: codex, steps: [{name: a, reply: {message: {text: x}}}]}}", `sessions["default"].harness`, RuleSchema},
+		{"schema: understudy/v2\nharness: Codex\nsessions: {default: {steps: [{name: a, reply: {message: {text: x}}}]}}", "harness", RulePattern},
+		{v1 + "        reply: {tool_use: {calls: [{shell: {command: ls}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].shell`, RuleSchema},
+		{v1 + "        expect: {action: shell}\n        reply: {message: {text: x}}\n", `sessions["default"].steps[0].expect.action`, RuleSchema},
+		{v1 + "        reply: {limit: {window: daily, resets_in_seconds: 5}}\n", `sessions["default"].steps[0].reply.limit.window`, RuleSchema},
+		{v2d + "        expect: {action: run}\n        reply: {message: {text: x}}\n", `sessions["default"].steps[0].expect.action`, RuleEnum},
+		{v2d + "        reply: {tool_use: {calls: [{shell: {command: ls}, read: {path: /a}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0]`, RuleOneOf},
+		{v2d + "        reply: {tool_use: {calls: [{tool: Bash, shell: {command: ls}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0]`, RuleOneOf},
+		{v2d + "        reply: {tool_use: {calls: [{shell: {command: \"\"}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].shell.command`, RuleRequired},
+		{v2d + "        reply: {tool_use: {calls: [{read: {path: \"\"}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].read.path`, RuleRequired},
+		{v2d + "        reply: {tool_use: {calls: [{write: {path: \"\", content: x}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].write.path`, RuleRequired},
+		{v2d + "        reply: {tool_use: {calls: [{edit: {path: /a, old: \"\", new: x}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].edit.old`, RuleRequired},
+		{v2d + "        reply: {tool_use: {calls: [{edit: {path: \"{{home}}/a\", old: x, new: y}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].edit.path`, RuleTemplate},
+		{v2d + "        reply: {tool_use: {calls: [{shell: {cmd: ls}}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].shell.cmd`, RuleUnknownField},
+		{v2d + "        reply: {tool_use: {calls: [{}]}}\n", `sessions["default"].steps[0].reply.tool_use.calls[0].tool`, RuleRequired},
+	}
+	for _, c := range cases {
+		wantProblem(t, c.src, c.path, c.rule)
 	}
 }

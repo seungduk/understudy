@@ -15,11 +15,13 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet
-        run: go vet ./... && go vet -tags e2e ./e2e
+        run: go vet ./... && go vet -tags e2e ./e2e && go vet -tags probe ./e2e
       - name: test
         run: go test -race -count=1 ./...
       - name: e2e compiles
-        run: go test -tags e2e -count=1 -run XXX ./e2e
+        run: go test -tags e2e -count=1 -run XXX ./e2e && go test -tags probe -count=1 -run XXX ./e2e
+      - name: profiles and codecs (the contract every codec and profile keeps)
+        run: go test -race -count=1 -v -run 'TestContract|TestProfilesWellFormed|TestReadResults|TestDetect' ./internal/protocol/... ./harness
   ui:
     runs-on: ubuntu-latest
     defaults:

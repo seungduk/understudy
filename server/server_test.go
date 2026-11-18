@@ -26,13 +26,13 @@ func mustScript(t *testing.T, src string) *script.Script {
 	return s
 }
 
-type harness struct {
+type rig struct {
 	t   *testing.T
 	s   *Server
 	srv *httptest.Server
 }
 
-func start(t *testing.T, src string, o Options) *harness {
+func start(t *testing.T, src string, o Options) *rig {
 	t.Helper()
 	if src != "" {
 		o.Script = mustScript(t, src)
@@ -40,7 +40,7 @@ func start(t *testing.T, src string, o Options) *harness {
 	s := New(o)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return &harness{t: t, s: s, srv: srv}
+	return &rig{t: t, s: s, srv: srv}
 }
 
 // conv builds a Claude-Code-like request body: messages alternate user and
@@ -83,7 +83,7 @@ type sse struct {
 	data map[string]any
 }
 
-func (h *harness) post(path, b string, hdr map[string]string) resp {
+func (h *rig) post(path, b string, hdr map[string]string) resp {
 	h.t.Helper()
 	req, _ := http.NewRequest("POST", h.srv.URL+path, strings.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -118,13 +118,28 @@ func (h *harness) post(path, b string, hdr map[string]string) resp {
 	return out
 }
 
-func (h *harness) msg(b string, hdr map[string]string) resp {
+func (h *rig) msg(b string, hdr map[string]string) resp {
 	return h.post("/v1/messages?beta=true", b, hdr)
 }
 
-func (h *harness) get(path string) resp {
+// get sends a GET as Claude Code does (with anthropic-version); getPlain sends none.
+func (h *rig) get(path string) resp {
 	h.t.Helper()
-	r, err := http.Get(h.srv.URL + path)
+	return h.getWith(path, map[string]string{"Anthropic-Version": "2023-06-01"})
+}
+
+func (h *rig) getPlain(path string) resp {
+	h.t.Helper()
+	return h.getWith(path, nil)
+}
+
+func (h *rig) getWith(path string, hdr map[string]string) resp {
+	h.t.Helper()
+	req, _ := http.NewRequest("GET", h.srv.URL+path, nil)
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -330,11 +345,6 @@ sessions:
 	r = h.msg(body(true, allTools, ""), map[string]string{"X-Understudy-Session": "five"})
 	if r.header.Get("Anthropic-Ratelimit-Unified-5h-Status") != "rejected" || r.header.Get("Anthropic-Ratelimit-Unified-Representative-Claim") != "five_hour" {
 		t.Fatal(r.header)
-	}
-	for _, w := range []script.Window{script.SevenDayOpus, script.SevenDaySonnet, script.FiveHour, script.SevenDay} {
-		if limitMessage(w) == "" {
-			t.Fatal(w)
-		}
 	}
 }
 
@@ -551,13 +561,20 @@ func TestOtherEndpoints(t *testing.T) {
 	if r := h.get("/v1/files"); r.status != 404 || !strings.Contains(r.body, "not_found_error") {
 		t.Fatal(r.body)
 	}
+	// Without an Anthropic header, the shared model list is OpenAI's.
+	if r := h.getPlain("/v1/models"); !strings.Contains(r.body, `"object":"list"`) || !strings.Contains(r.body, `"id":"claude-test"`) {
+		t.Fatal(r.body)
+	}
+	if r := h.getPlain("/v1beta/models"); !strings.Contains(r.body, `"name":"models/claude-test"`) {
+		t.Fatal(r.body)
+	}
 	other := 0
 	for _, e := range h.s.Requests() {
 		if e.Outcome == Other {
 			other++
 		}
 	}
-	if other != 7 {
+	if other != 8 { // the bad count_tokens body is a bad_request
 		t.Fatal(other)
 	}
 }

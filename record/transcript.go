@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seungduk/understudy/internal/wire"
+	"github.com/seungduk/understudy/core"
+	"github.com/seungduk/understudy/harness"
+	"github.com/seungduk/understudy/internal/protocol/anthropic"
 	"github.com/seungduk/understudy/script"
 )
 
@@ -154,7 +156,7 @@ func FromTranscript(r io.Reader, m Meta) (script.File, Report, error) {
 				flush()
 			}
 			if cur == nil {
-				cur = &turn{id: msg.ID, retries: pendingRetries, expect: expectFor(lastResults)}
+				cur = &turn{id: msg.ID, retries: pendingRetries, expect: expectFor(claudeResults(lastResults))}
 				pendingRetries = nil
 			}
 			if ev.Error != "" {
@@ -251,16 +253,32 @@ type result struct {
 	isError bool
 }
 
+// claudeResults reads transcript results as Claude Code's profile does.
+func claudeResults(rs []result) []script.Result {
+	pr, _ := harness.Lookup(string(harness.ClaudeCode))
+	out := make([]script.Result, len(rs))
+	for i, r := range rs {
+		mark := core.MarkedOK
+		if r.isError {
+			mark = core.MarkedError
+		}
+		rd := pr.Read("Bash", r.text, mark)
+		out[i] = script.Result{IsError: rd.IsError, Text: r.text, Exit: rd.Exit, HasExit: rd.HasExit && r.isError}
+	}
+	return out
+}
+
 // expectFor is the expectation a replay checks before the next reply: the same
 // outcome as in the recording (an error, with its exit code when it shows one, or ok).
-func expectFor(rs []result) *script.Matcher {
+func expectFor(rs []script.Result) *script.Matcher {
 	if len(rs) == 0 {
 		return nil
 	}
 	for _, r := range rs {
-		if r.isError {
+		if r.IsError {
 			m := &script.Matcher{Result: script.Error}
-			if code, ok := script.ExitCode(script.Result{IsError: true, Text: r.text}); ok {
+			if r.HasExit {
+				code := r.Exit
 				m.ExitCode = &code
 			}
 			return m
@@ -303,9 +321,9 @@ func errorReply(kind, text string) *script.Reply {
 	return &script.Reply{HTTPError: &script.HTTPError{Error: name, Retry: script.RetryNever}}
 }
 
-func kindOfStatus(status int) (wire.ErrorKind, bool) {
-	for _, k := range wire.ErrorKinds {
-		if k.Status() == status {
+func kindOfStatus(status int) (core.ErrorKind, bool) {
+	for _, k := range core.ErrorKinds {
+		if anthropic.Status(k) == status {
 			return k, true
 		}
 	}

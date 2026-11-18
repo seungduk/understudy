@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,6 +23,8 @@ import (
 	"github.com/seungduk/understudy/clienv"
 	"github.com/seungduk/understudy/control"
 	"github.com/seungduk/understudy/explain"
+	"github.com/seungduk/understudy/harness"
+	"github.com/seungduk/understudy/protocol"
 	"github.com/seungduk/understudy/record"
 	"github.com/seungduk/understudy/script"
 	"github.com/seungduk/understudy/server"
@@ -55,7 +58,8 @@ func New(o Options) *mcp.Server {
 	add(s, "load_script", "Load a script into the running understudy server, replacing the one loaded; the log is kept (call reset for a clean run). "+
 		"Give yaml or file. Answers {loaded, sessions, server_url}. A script that does not check is not loaded: the error result lists problems with fixes. "+
 		"Next: client_env, then run claude -p.", nil, t.load)
-	add(s, "client_env", "The environment and command that run the real Claude Code CLI ('claude -p') against the understudy server, with dummy credentials only. "+
+	add(s, "client_env", "The environment and command that run a real harness against the understudy server, with dummy credentials only: Claude Code ('claude -p') by default, "+
+		"or give harness (codex, opencode, pi, gemini-cli, antigravity) to get its command, with its config files written into a fresh home folder. "+
 		"Give session to send the X-Understudy-Session header (the script's session key; without it requests are in session default). "+
 		"auth gateway makes usage-limit replies show as subscription limits ('You've hit your weekly limit'); api_key (default) shows them as 429 errors. "+
 		"Answers {env, unset, shell, command}: run shell in a POSIX shell from the directory the session works in.", func(sc *jsonschema.Schema) {
@@ -306,8 +310,11 @@ func (t *tools) load(ctx context.Context, in ScriptSource) (any, *failure) {
 
 // EnvIn is client_env's input.
 type EnvIn struct {
-	Session string `json:"session,omitempty" jsonschema:"the session key to send as the X-Understudy-Session header, one of the script's sessions; empty sends none (session default)"`
-	Auth    string `json:"auth,omitempty" jsonschema:"api_key (default) or gateway (usage limits show as subscription limits)"`
+	Session  string `json:"session,omitempty" jsonschema:"the session key to send as the X-Understudy-Session header, one of the script's sessions; empty sends none (session default)"`
+	Auth     string `json:"auth,omitempty" jsonschema:"api_key (default) or gateway (usage limits show as subscription limits); Claude Code only"`
+	Harness  string `json:"harness,omitempty" jsonschema:"the harness to run: claude-code (default), codex, opencode, pi, gemini-cli or antigravity"`
+	Protocol string `json:"protocol,omitempty" jsonschema:"for a harness that speaks several protocols (opencode, pi): anthropic, openai-chat, openai-responses or gemini; empty is its usual one"`
+	Dir      string `json:"dir,omitempty" jsonschema:"the working directory of the run (for harnesses other than Claude Code); empty is the current directory"`
 }
 
 type envOut struct {
@@ -322,6 +329,9 @@ type envOut struct {
 func (t *tools) clientEnv(_ context.Context, in EnvIn) (any, *failure) {
 	if in.Session != "" && !script.ValidSessionKey(in.Session) {
 		return nil, fail(fmt.Sprintf("%q is not a session key", in.Session), "use the key as the script names it: 1-128 letters, digits and . _ : / @ + -")
+	}
+	if in.Harness != "" && in.Harness != string(harness.ClaudeCode) {
+		return t.harnessEnv(in)
 	}
 	a := clienv.APIKey
 	switch in.Auth {
@@ -347,6 +357,71 @@ func (t *tools) clientEnv(_ context.Context, in EnvIn) (any, *failure) {
 	out.Note = "run shell, then command, in the session's working directory (the script's {{cwd}}). CLAUDE_CONFIG_DIR is an empty folder so the CLI never reads a real login; " +
 		"--dangerously-skip-permissions lets scripted Edit, Write and Bash calls run. The final stream-json line is the result; then call list_sessions or read_log."
 	return out, nil
+}
+
+// harnessEnv is client_env for a harness other than Claude Code: its config
+// files are written into a new home folder, and the command runs it there.
+func (t *tools) harnessEnv(in EnvIn) (any, *failure) {
+	pr, ok := harness.Lookup(in.Harness)
+	if !ok || pr.ID == harness.Generic {
+		return nil, fail(fmt.Sprintf("there is no harness %q", in.Harness), "use one of: "+strings.Join(harnessNames(), ", "))
+	}
+	var p protocol.ID
+	if in.Protocol != "" {
+		if p, ok = protocol.Parse(in.Protocol); !ok || !pr.Speaks(p) {
+			return nil, fail(fmt.Sprintf("%s does not speak %q", pr.ID, in.Protocol), "leave protocol out, or use one the harness speaks")
+		}
+	}
+	home, err := os.MkdirTemp("", "understudy-"+string(pr.ID)+"-home-")
+	if err != nil {
+		return nil, fail("cannot make a home folder: "+err.Error(), "free some disk space")
+	}
+	dir := in.Dir
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	if pr.Launch.EnvVar != "" && os.Getenv(pr.Launch.EnvVar) == "" {
+		if _, err := exec.LookPath(pr.Launch.Binary); err != nil {
+			os.Setenv(pr.Launch.EnvVar, pr.Launch.Binary) // set up anyway; the command names the usual binary
+		}
+	}
+	s, err := pr.Prepare(harness.Target{URL: t.c.URL(), Session: in.Session, Home: home, Dir: dir, Prompt: "YOUR PROMPT", Protocol: p})
+	if err != nil {
+		return nil, fail(err.Error(), "install the harness, or set "+pr.Launch.EnvVar+" to its binary")
+	}
+	for path, content := range s.Files {
+		if os.MkdirAll(filepath.Dir(path), 0o755) != nil || os.WriteFile(path, []byte(content), 0o644) != nil {
+			return nil, fail("cannot write "+path, "check the temporary folder is writable")
+		}
+	}
+	out := envOut{ServerURL: t.c.URL(), Env: map[string]string{}, Unset: []string{}}
+	var b strings.Builder
+	var env []string
+	for _, kv := range s.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		out.Env[k] = v
+		env = append(env, k+"='"+strings.ReplaceAll(v, "'", `'\''`)+"'")
+	}
+	b.WriteString("# the config files are written under " + home + "\n")
+	out.Shell = b.String()
+	args := []string{"'" + strings.ReplaceAll(s.Binary, "'", `'\''`) + "'"}
+	for _, a := range s.Args {
+		args = append(args, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
+	}
+	out.Command = "env -i " + strings.Join(env, " ") + " " + strings.Join(args, " ") + " </dev/null"
+	out.Note = "run command from " + dir + " (replace YOUR PROMPT); it starts " + pr.Name + " in an empty environment with dummy keys and a home folder of its own, so it never reads a real login."
+	if pr.Launch.SessionInPrompt {
+		out.Note += " " + pr.Name + " sends no custom headers: the session marker is in the prompt."
+	}
+	return out, nil
+}
+
+func harnessNames() []string {
+	var out []string
+	for _, pr := range harness.All() {
+		out = append(out, string(pr.ID))
+	}
+	return out
 }
 
 type sessionsOut struct {

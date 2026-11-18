@@ -2,16 +2,22 @@ package script
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/seungduk/understudy/core"
 )
 
-// Result is one tool result that a request carries.
+// Result is one tool result that a request carries, as the harness profile
+// read it: which tool and neutral action it answers, whether it is an error,
+// and the exit code it shows.
 type Result struct {
-	Tool    string // the tool whose call this answers ("" when the call is not in the history)
+	Tool    string      // the tool whose call this answers ("" when the call is not in the history)
+	Action  core.Action // the neutral action of that tool (core.NoAction when the tool has none)
 	IsError bool
 	Text    string
+	Exit    int  // the exit code, when HasExit
+	HasExit bool // the result shows an exit code
 }
 
 // Branch labels of a Choice.
@@ -164,26 +170,13 @@ func (p *SessionPlan) decide(pos int, results []Result, policy Divergence) decis
 	return take(st.cases[0].br, "case 0")
 }
 
-var exitCodeRe = regexp.MustCompile(`(?m)^(?:Error: )?Exit code (\d+)`)
-
-// ExitCode reads the exit code from a Bash tool result: 0 for a result that is
-// not an error, the number of an "Exit code N" line for an error, false otherwise.
-func ExitCode(r Result) (int, bool) {
-	if !r.IsError {
-		return 0, true
-	}
-	m := exitCodeRe.FindStringSubmatch(r.Text)
-	if m == nil {
-		return 0, false
-	}
-	n, err := strconv.Atoi(m[1])
-	return n, err == nil
-}
-
 func (m *matcher) describe() string {
 	var parts []string
 	if m.tool != "" {
 		parts = append(parts, "tool: "+m.tool)
+	}
+	if m.action != core.NoAction {
+		parts = append(parts, "action: "+m.action.Name())
 	}
 	if m.result != "" {
 		parts = append(parts, "result: "+string(m.result))
@@ -216,6 +209,9 @@ func (m *matcher) match(results []Result) (bool, string) {
 		if m.tool != "" && r.Tool != m.tool {
 			continue
 		}
+		if m.action != core.NoAction && r.Action != m.action {
+			continue
+		}
 		considered++
 		if why := m.fail(r); why != "" {
 			reasons = append(reasons, label+" "+why)
@@ -224,6 +220,9 @@ func (m *matcher) match(results []Result) (bool, string) {
 		return true, label + " passes"
 	}
 	if considered == 0 {
+		if m.action != core.NoAction && m.tool == "" {
+			return false, fmt.Sprintf("no result answers a %s action", m.action.Name())
+		}
 		return false, fmt.Sprintf("no result is from tool %s", m.tool)
 	}
 	return false, strings.Join(reasons, "; ")
@@ -237,12 +236,11 @@ func (m *matcher) fail(r Result) string {
 		return "is not an error"
 	}
 	if m.exitCode != nil {
-		code, ok := ExitCode(r)
-		if !ok {
+		if !r.HasExit {
 			return "shows no exit code"
 		}
-		if code != *m.exitCode {
-			return fmt.Sprintf("has exit code %d", code)
+		if r.Exit != *m.exitCode {
+			return fmt.Sprintf("has exit code %d", r.Exit)
 		}
 	}
 	if m.contains != "" && !strings.Contains(r.Text, m.contains) {

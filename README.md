@@ -10,18 +10,23 @@
   <img src="docs/screenshots/hero-divergence.png" width="900" alt="The understudy web UI: a session whose test result did not fit the script, with what the script expected beside what the request carried">
 </p>
 
-A small, exact, scriptable fake of the Anthropic Messages API, so the **real** Claude Code CLI
-can run end to end with only the model faked. Claude Code reads and edits real files, runs real
-commands, retries and streams its `stream-json` output as it always does; understudy plays the
-model from a script. Use it for deterministic tests of agent factories, harnesses and anything
-else that drives `claude -p`.
+A small, exact, scriptable fake of the model APIs that agent harnesses use, so the **real**
+harness runs end to end with only the model faked. Claude Code, OpenAI's Codex CLI, opencode,
+pi, Gemini CLI and Google Antigravity's CLI read and edit real files, run real commands, retry
+and stream as they always do; understudy plays the model from a script. Use it for
+deterministic tests of agent factories, harnesses and anything else that drives a coding agent.
 
-- **Exact wire**: the SSE event sequence of the real API (`message_start` with the full message
-  and usage, `content_block_start/delta/stop` for text, thinking with `signature_delta`, tool use
-  with `input_json_delta` fragments, `ping`, `message_delta` with `stop_reason` and usage,
-  `message_stop`), in-stream `error` events, the real error bodies and statuses,
-  `POST /v1/messages` (streamed and not, with `?beta=true`), `/v1/messages/count_tokens`,
-  `/v1/models`, and Claude Code's start-up `HEAD /api/hello`.
+- **Four wire protocols, exactly**: Anthropic Messages (the SSE event sequence, thinking with
+  signatures, `input_json_delta`, in-stream errors, the subscription limit headers), OpenAI Chat
+  Completions (`chat.completion.chunk` with `tool_calls` deltas, `reasoning_content`), OpenAI
+  Responses (the typed `response.*` events Codex consumes, reasoning items, function and custom
+  tool calls, `response.failed`) and Gemini (`generateContent`, `streamGenerateContent?alt=sse`,
+  `functionCall`/`functionResponse` parts, `RESOURCE_EXHAUSTED` quota details), with each one's
+  real error bodies and statuses.
+- **One script for every harness**: neutral actions (`shell`, `read`, `write`, `edit`) become
+  each harness's own tools (`Bash`, `exec_command`, `apply_patch`, `run_shell_command`, ...);
+  native calls are sent as written. Each harness's results are read by its profile (how it
+  reports exit codes and errors, measured on the real CLI).
 - **Scripts agents can write**: YAML with a JSON Schema, closed sets of reply kinds and tests,
   unknown fields refused, plain fix-it errors with path, line and rule
   ([SCRIPTS.md](SCRIPTS.md) is the one-page guide).
@@ -29,18 +34,42 @@ else that drives `claude -p`.
   many sessions run at once and client retries are safe. Sessions are keyed explicitly by a
   header or a prompt marker.
 - **Faults**: HTTP errors, in-stream errors, stalls (timed, or held until a gate is released),
-  mid-stream disconnects, TCP resets, slow streams, and subscription usage limits that Claude Code
-  reports as `You've hit your weekly limit`.
-- **Record and replay**: turn a real session's transcript (or live traffic through a recording
-  proxy) into a script, then replay it with a strict or lenient divergence policy.
-- **Go library and test helper**: start the server inside `go test`, load scripts, drive the real
-  CLI, assert on the request log, release gates, move a virtual clock.
+  mid-stream disconnects, TCP resets, slow streams, and usage limits in each protocol's form
+  (Claude Code's `You've hit your weekly limit`, Codex's `You’ve hit your usage limit`, Gemini's
+  quota errors).
+- **Record and replay**: turn a real session (a Claude Code transcript, or live traffic of any
+  harness through the recording proxy) into a script, then replay it with a strict or lenient
+  divergence policy.
+- **Go library and test helpers**: start the server inside `go test`, load scripts, drive any of
+  the real CLIs, assert on the request log, release gates, move a virtual clock.
 - **Web UI**: sessions and their state, each conversation with the step that answered every
   request, divergences with what was expected beside what came, gates to release, the script
   with the steps that ran, live.
 - **MCP server** (`understudy mcp`): agents write, check and load scripts, run the real CLI,
   read the log, release gates and record transcripts through tools.
-- Two dependencies (`gopkg.in/yaml.v3` and the official MCP Go SDK), Apache-2.0.
+- Two dependencies (`gopkg.in/yaml.v3` and the official MCP Go SDK), Apache-2.0. How the code
+  is layered: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Supported harnesses
+
+| Harness | Protocol(s) understudy serves it | Tested version | Session key | e2e (2026-11-18, macOS arm64) |
+|---|---|---|---|---|
+| Claude Code | Anthropic Messages | 2.1.325 (2.1.326 on Linux) | header | 11 tests pass |
+| OpenAI Codex CLI | OpenAI Responses (Codex dropped Chat Completions) | codex-cli 0.170.0 | header | 7 of 7 |
+| opencode | Chat Completions, Anthropic Messages, DeepSeek provider | 1.19.6 | header | 7 of 7 per protocol |
+| pi coding agent | Chat Completions, Responses, Anthropic Messages, Gemini | 0.73.1 | header | 7 of 7 per protocol |
+| Gemini CLI | Gemini | 0.68.0 | header (`GEMINI_CLI_CUSTOM_HEADERS`) | 7 of 7 |
+| Google Antigravity CLI (`agy`) | Gemini (`modelProvider: gemini`) | 1.5.11 | prompt marker | 7 of 7 |
+| DeepSeek API users | Chat Completions at `/chat/completions`, Anthropic at `/anthropic/v1/messages` | (no official DeepSeek harness exists) | as the harness | opencode's `deepseek` provider: 7 of 7; Claude Code at `/anthropic`: covered |
+
+The seven e2e tests per harness: a text answer, a tool loop that edits a real file, a branch on
+a failing test, a retry after a server error, the usage-limit message, a stall held until a gate
+is released, and record-then-replay through the recording proxy.
+
+DeepSeek has no official coding harness (its own documentation points Claude Code at
+`https://api.deepseek.com/anthropic` and lists opencode); understudy serves both DeepSeek
+surfaces: Chat Completions without `/v1` (DeepSeek's base URL), thinking as DeepSeek's
+`reasoning_content`, and the Anthropic API under `/anthropic`.
 
 ## Quick start
 
@@ -70,6 +99,31 @@ sets a dummy `ANTHROPIC_API_KEY`, turns off telemetry and non-essential traffic,
 variable that could carry a real credential. Run the CLI with its own empty `CLAUDE_CONFIG_DIR`
 so it never reads your login. understudy never needs or forwards a real credential, and the
 request log never keeps `Authorization`, `x-api-key` or any header that looks like a secret.
+
+### Other harnesses
+
+`understudy setup` writes a harness's config files into an empty home folder and prints the
+command that runs it against the server, in an empty environment with dummy keys only:
+
+```sh
+understudy setup --harness codex --home /tmp/codex-home --session t1/writer --prompt "fix the bug"
+# env -i PATH=... HOME=/tmp/codex-home CODEX_HOME=/tmp/codex-home/.codex UNDERSTUDY_DUMMY_KEY=understudy-dummy-key \
+#   codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -C ... 'fix the bug' </dev/null
+understudy harnesses          # every profile: protocols, how each action maps to its tools
+```
+
+What it sets up, per harness (never your own config: the home folder is new):
+
+| Harness | Points it at understudy with | Runs |
+|---|---|---|
+| Codex | `config.toml`: `model_providers.understudy` with `base_url = "URL/v1"`, `wire_api = "responses"`, `env_key` naming a dummy key, `http_headers` with the session | `codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox` with stdin empty (it reads more prompt from a pipe) |
+| opencode | `OPENCODE_CONFIG` file: an `@ai-sdk/openai-compatible` provider with `baseURL = URL/v1`, the built-in `anthropic` and `deepseek` providers with `baseURL`, headers with the session, permissions allowed | `opencode run --format json --model understudy/fake-chat` (or `anthropic/fake-claude`, `deepseek/deepseek-chat`) |
+| pi | `PI_CODING_AGENT_DIR/models.json`: one provider per API (`openai-completions`, `openai-responses`, `anthropic-messages`, `google-generative-ai`) with `baseUrl` and headers | `pi -p --mode json --model us-chat/fake-chat` (or `us-responses/...`, `us-anthropic/...`, `us-gemini/...`) |
+| Gemini CLI | `GOOGLE_GEMINI_BASE_URL=URL`, `GEMINI_API_KEY` dummy, `settings.json` with `selectedType: gemini-api-key` and folder trust off, `GEMINI_CLI_CUSTOM_HEADERS` with the session | `gemini -p ... --output-format stream-json --yolo --model gemini-3.1-pro-preview` |
+| Antigravity | `settings.json` with `modelProvider: gemini` (without it `GEMINI_API_KEY` is ignored), `GOOGLE_GEMINI_BASE_URL=URL`, `AGY_CLI_DISABLE_AUTO_UPDATE` | `agy -p ... --output-format stream-json --dangerously-skip-permissions`; the session marker goes into the prompt |
+
+Side requests are answered without the script and logged with `aux`: opencode's title request,
+Gemini CLI's routing request (sent when no `--model` is given).
 
 ## Scripts
 
@@ -104,6 +158,22 @@ message, fix}]}`; the exit code is 0 when the script checks.
 
 ## Faults
 
+What each harness did with each fault (measured 2026-11-18 with the versions above):
+
+| Script | Codex | opencode | pi | Gemini CLI | Antigravity |
+|---|---|---|---|---|---|
+| `http_error: {error: api_error}` | retried | retried | retried | retried | **not retried**, exit 3 |
+| `http_error: {error: overloaded}` | retried | retried | retried | retried | retried |
+| `http_error: {error: rate_limit, retry_after_seconds: 1}` | retried | retried | retried | retried | retried |
+| `stream_error: {error: overloaded}` | **not retried**: `Selected model is at capacity`, exit 1 | retried | retried | retried | kept the partial text as a turn and asked again |
+| `cut: {after_events: 3, how: reset}` | retried (`Reconnecting... 1/5`) | retried | retried | retried | retried |
+| `http_error: {error: invalid_request, retry: never}` | not retried, exit 1 | not retried, exit 1 | not retried, exit 0 | not retried | not retried, exit 3 |
+| `limit: {window: per_minute}` | retried | retried after retry-after | retried | retried after RetryInfo | retried |
+| `limit: {window: seven_day}` | `You’ve hit your usage limit`, exit 1 | waits out retry-after | 4 requests, then `429 The usage limit has been reached` | `You exceeded your current quota`, no retry | `RESOURCE_EXHAUSTED`, exit 3 |
+
+Codex with a 500 that never ends sends 30 requests (6 stream attempts of 5 HTTP tries each)
+before `We’re currently experiencing high demand`.
+
 | Script | Wire | Claude Code 2.1.325 did |
 |---|---|---|
 | `http_error: {error: overloaded}` | 529 `overloaded_error` | retried (exit 0 when a later attempt answers) |
@@ -116,6 +186,27 @@ message, fix}]}`; the exit code is 0 when the script checks.
 | strict divergence | 400 `invalid_request_error`, `x-should-retry: false` | retried 5 times, then `API Error: 400 understudy: the request does not fit the script: ...`, exit 1 |
 
 ## Account-limit simulation (measured)
+
+### Codex, Gemini and the others
+
+The same `limit` reply is each protocol's own limit:
+
+- **OpenAI protocols** (Codex, opencode, pi): `429` with
+  `{"error":{"type":"usage_limit_reached","resets_at":<unix>,"limit_window_minutes":N,...}}`,
+  `x-codex-primary-used-percent: 100`, `x-codex-primary-window-minutes`, `x-codex-primary-reset-at`,
+  `retry-after` and `x-should-retry: false`. Codex 0.170.0 parses it (in `codex-api`) as a usage
+  limit and prints `You’ve hit your usage limit. ... try again at <time>.`, exit 1, no retry.
+  Without `x-should-retry: false` the OpenAI SDK in pi sleeps for the whole `retry-after`.
+  `per_minute` is a `429 rate_limit_exceeded` (`Please try again in Ns.`) that every harness retries.
+- **Gemini** (Gemini CLI, Antigravity, pi): `429 RESOURCE_EXHAUSTED` with
+  `google.rpc.QuotaFailure` (`quotaId` `GenerateRequestsPerDayPerProjectPerModel` for `daily`,
+  `...PerMinute...` for `per_minute`) and `google.rpc.RetryInfo`. Gemini CLI 0.68.0 reads a
+  per-day quota as terminal (`You have exhausted your daily quota on this model.`), a delay over
+  300 s as terminal (`Suggested retry after 7200s`), and retries a shorter one after `retryDelay`.
+- **Anthropic** to harnesses other than Claude Code (opencode, pi): the unified headers below;
+  they show the body's message.
+
+### Claude Code
 
 Measured on 2026-11-18 with **Claude Code 2.1.325** (macOS arm64), against a probe server and then
 the e2e suite:
@@ -164,6 +255,11 @@ understudy record --transcript run.jsonl --session t1/writer --run r42 --task t1
 understudy record-proxy --upstream https://api.anthropic.com --addr 127.0.0.1:8766 --out rec.yaml
 ```
 
+`record-proxy` speaks every protocol: point any harness's base URL at it and it records the
+session through the request's codec, with the harness's native tool calls (a script of a harness
+other than Claude Code names its `harness:`, schema `understudy/v2`). The e2e suite records each
+harness through it against a scripted upstream and replays the result.
+
 `record --transcript` reads two forms: the `stream-json` output of `claude -p --output-format
 stream-json --verbose`, and a Claude Code session file (`~/.claude/projects/*/*.jsonl`). A tool
 that keeps sessions in its own log extracts the session records into one of these first.
@@ -177,6 +273,16 @@ as `attempts`; the usage-limit message becomes a `limit` reply. In Go: `record.F
 and `record.NewProxy`. The proxy forwards credentials to the upstream and never stores them.
 
 ## Go
+
+```go
+o := us.Harness(t, fake, harness.Codex, us.HarnessRun{Dir: dir, Session: "t1/writer", Prompt: "fix it"})
+// o.Exit, o.Stdout, o.Stderr, o.Version, o.Home; Protocol: protocol.Gemini picks pi's Gemini provider
+```
+
+`us.Harness` runs any profiled harness from its launch data (a fresh home folder, an empty
+environment but `PATH`, dummy keys) and skips the test when the binary is missing
+(`UNDERSTUDY_CODEX`, `UNDERSTUDY_OPENCODE`, `UNDERSTUDY_PI`, `UNDERSTUDY_GEMINI`, `UNDERSTUDY_AGY`
+name other binaries). For Claude Code:
 
 ```go
 import us "github.com/seungduk/understudy/understudytest"
@@ -251,7 +357,7 @@ over streamable HTTP at `/_understudy/mcp` (`--mcp off` turns it off).
 |---|---|
 | `validate_script` | check a script (`yaml` or `file`) without loading it: `{ok, sessions, problems: [{path, line, rule, message, fix}]}` |
 | `load_script` | load a script into the server; one that does not check is refused with its problems |
-| `client_env` | the environment and command that run the real `claude -p` against the server, dummy credentials only (`session`, `auth: api_key \| gateway`) |
+| `client_env` | the environment and command that run the real `claude -p` against the server, dummy credentials only (`session`, `auth: api_key \| gateway`); with `harness` (`codex`, `opencode`, `pi`, `gemini-cli`, `antigravity`, and `protocol`, `dir`) that harness's command, its config written into a fresh home |
 | `list_sessions` | every session with its state, turn, step and counts, and the gates |
 | `read_log` | the request log, filtered by `session`, `outcome` (or `divergence`), `step`, `since_seq`, `limit`; `detail: summary \| full` |
 | `explain` | why each request got its answer, what a divergence expected and got; with `script_yaml` or `script_file`, what that script would choose instead |
@@ -301,7 +407,7 @@ On the same address, under `/_understudy/`:
 | Call | Does |
 |---|---|
 | `GET health` | `{ok, version, script_loaded}` |
-| `PUT script` (body: the YAML) | load a script; `400 {problems: [...]}` when it does not check |
+| `PUT script` (body: the YAML) | load a script; `400 {problems: [...]}` when it does not check (or names a harness without a profile) |
 | `GET script` | the loaded script, as it was written |
 | `GET script/info` | `{loaded, divergence, provenance, sessions: [{key, line, steps: [{name, line}]}]}` |
 | `POST validate` (body: the YAML) | `{ok, sessions, problems}` without loading it |
@@ -316,7 +422,8 @@ On the same address, under `/_understudy/`:
 
 ```sh
 go test -race ./...                  # unit and package tests, no network beyond loopback
-go test -tags e2e -v ./e2e           # drives the real claude CLI (skips if it is not installed)
+go test -tags e2e -v ./e2e           # drives the real CLIs (each skips if it is not installed)
+UNDERSTUDY_HARNESS=codex,pi go test -tags e2e -run TestHarness -v ./e2e   # some harnesses only
 (cd ui && npm ci && npm run check && npm run build)   # the web UI: type-check and build into ui/dist
 ```
 
@@ -329,6 +436,15 @@ weekly and 5-hour limit messages, the system-prompt session marker, strict diver
 then replay (passing, then diverging), and the MCP loop (load a script, run the CLI with
 `client_env`, find the divergence with `read_log`, fix, reset, run again).
 
+Each codec runs the shared contract (`internal/protocol/codectest`): every reply shape, error
+kind, retry hint and limit window round-trips through its encoder and its reader. The harness
+profiles' result rules are tested on the exact texts each real CLI sent.
+
+The e2e suite covers text, a tool loop editing a real file, branching on a failing test, retry
+after 529, an in-stream error, close and reset mid-stream, a gated stall released by the test, the
+weekly and 5-hour limit messages, the system-prompt session marker, strict divergence, and record
+then replay (passing, then diverging).
+
 ### In an agent factory
 
 understudy ran a whole practice run of an agent factory on four machines on 2026-11-18:
@@ -339,6 +455,19 @@ checked, reviewed and landed; their writers were held at a gate until both had w
 second landing conflicted and the scripted merger resolved it; one planner request got the
 weekly limit, which the factory read as that machine's limit and moved the seat to another
 machine. 19 requests, all served, none diverged.
+
+### Harness versions tested
+
+| Harness | Version | Installed from | Result | Date |
+|---|---|---|---|---|
+| Codex CLI | 0.170.0 | npm `@openai/codex` | 7/7 | 2026-11-18 |
+| opencode | 1.19.6 | npm `opencode-ai` | 7/7 over Chat Completions, Anthropic and its DeepSeek provider | 2026-11-18 |
+| pi | 0.73.1 | npm `@mariozechner/pi-coding-agent` | 7/7 over Chat Completions, Responses, Anthropic and Gemini | 2026-11-18 |
+| Gemini CLI | 0.68.0 | npm `@google/gemini-cli` | 7/7 | 2026-11-18 |
+| Antigravity CLI | 1.5.11 | Google's release tarball (the Homebrew cask's URL and checksum) | 7/7 | 2026-11-18 |
+
+All were installed into a private prefix, run with fresh home folders and dummy keys, and never
+signed in.
 
 ### Claude Code versions tested
 
@@ -402,5 +531,6 @@ simulation, and record/replay with a divergence policy.
 
 ## License
 
-Apache-2.0. "Claude" and "Anthropic" are trademarks of Anthropic; understudy is not affiliated
-with or endorsed by Anthropic.
+Apache-2.0. "Claude" and "Anthropic" are trademarks of Anthropic; "OpenAI" and "Codex" of OpenAI;
+"Gemini" and "Antigravity" of Google; "DeepSeek" of DeepSeek. understudy is not affiliated with or
+endorsed by any of them.
