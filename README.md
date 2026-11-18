@@ -12,7 +12,7 @@
 
 ## What it is
 
-Coding agents such as Claude Code, Codex CLI, opencode, pi, Gemini CLI, and Antigravity's CLI communicate with language models over HTTP APIs. **understudy** mocks these model APIs using concise YAML scripts. You define what the model returns at each turn, point your agent at understudy, and let the real agent execute: it reads and edits files, runs commands, handles retries, and streams responses just like it does in production.
+Coding agents communicate with language models over HTTP APIs. **understudy** mocks these model APIs using concise YAML scripts. You define what the model returns at each turn, point your agent at understudy, and let the real agent execute: it reads and edits files, runs commands, handles retries, and streams responses just like it does in production.
 
 Because tests run without real models or API credentials, agent test suites execute quickly and produce deterministic results every time. understudy can also simulate HTTP errors, stalls, dropped connections, and rate limits, matching the exact payloads and status codes of real provider APIs.
 

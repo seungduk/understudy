@@ -12,7 +12,7 @@
 
 ## 项目简介
 
-Claude Code、Codex CLI、opencode、pi、Gemini CLI 以及 Antigravity CLI 等编程智能体（Coding Agent）通过 HTTP API 与大语言模型通信。**understudy** 使用简洁的 YAML 脚本来 Mock 这些模型 API。你只需定义模型在每个回合中返回的内容，并将真实的 Agent 指向 understudy，Agent 即可像在生产环境中一样读取与编辑文件、运行终端命令、自动重试以及流式接收响应。
+编程智能体（Coding Agent）通过 HTTP API 与大语言模型通信。**understudy** 使用简洁的 YAML 脚本来 Mock 这些模型 API。你只需定义模型在每个回合中返回的内容，并将真实的 Agent 指向 understudy，Agent 即可像在生产环境中一样读取与编辑文件、运行终端命令、自动重试以及流式接收响应。
 
 由于测试过程中不调用真实大模型且无需真实 API 凭据，Agent 测试套件可在数毫秒内完成，并保证每次运行结果完全一致（确定性）。此外，understudy 还可以模拟 HTTP 错误、请求挂起（stall）、连接断开以及用量限制（rate limit），且响应格式与状态码与真实服务商 API 完全一致。
 
