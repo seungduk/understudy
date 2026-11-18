@@ -166,3 +166,51 @@ func TestMisc(t *testing.T) {
 		t.Error(c)
 	}
 }
+
+func TestHarnessesAndSetup(t *testing.T) {
+	c, o, _ := call("harnesses")
+	if c != 0 || !strings.Contains(o, "codex  OpenAI Codex CLI") || !strings.Contains(o, "shell  -> exec_command") {
+		t.Fatal(o)
+	}
+	c, o, _ = call("harnesses", "--json")
+	var rep struct {
+		Harnesses []struct {
+			ID        string
+			Protocols []string
+		}
+	}
+	if c != 0 || json.Unmarshal([]byte(o), &rep) != nil || len(rep.Harnesses) < 5 {
+		t.Fatal(o)
+	}
+	home := t.TempDir()
+	t.Setenv("UNDERSTUDY_CODEX", "/opt/codex")
+	c, o, e := call("setup", "--harness", "codex", "--home", home, "--session", "t1/writer", "--url", "http://h:1")
+	if c != 0 || !strings.Contains(o, "env -i ") || !strings.Contains(o, "CODEX_HOME="+home+"/.codex") || !strings.Contains(o, "/opt/codex exec") {
+		t.Fatal(c, o, e)
+	}
+	b, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(string(b), `base_url = "http://h:1/v1"`) || !strings.Contains(string(b), `"X-Understudy-Session" = "t1/writer"`) {
+		t.Fatal(string(b))
+	}
+	c, o, _ = call("setup", "--harness", "pi", "--home", t.TempDir(), "--protocol", "gemini", "--json")
+	var s struct {
+		Command []string
+		Files   []string
+	}
+	if c != 0 || json.Unmarshal([]byte(o), &s) != nil || !strings.Contains(strings.Join(s.Command, " "), "us-gemini/fake-gemini") || len(s.Files) == 0 {
+		t.Fatal(o)
+	}
+	for _, bad := range [][]string{{"setup"}, {"setup", "--harness", "nope", "--home", "x"}, {"setup", "--harness", "codex"},
+		{"setup", "--harness", "codex", "--home", "x", "--protocol", "gemini"}, {"setup", "--harness", "codex", "--home", "x", "--session", "a b"}, {"harnesses", "--bogus"}} {
+		if c, _, e := call(bad...); c != 2 || e == "" {
+			t.Errorf("%v: %d %s", bad, c, e)
+		}
+	}
+	// A script naming a harness with no profile does not validate.
+	dir := t.TempDir()
+	f := filepath.Join(dir, "h.yaml")
+	os.WriteFile(f, []byte("schema: understudy/v2\nharness: claude-desktop\nsessions:\n  default:\n    steps:\n      - {name: a, reply: {message: {text: hi}}}\n"), 0o644)
+	if c, o, _ := call("validate", f); c != 1 || !strings.Contains(o, `there is no harness "claude-desktop"`) || !strings.Contains(o, "codex") {
+		t.Fatal(c, o)
+	}
+}

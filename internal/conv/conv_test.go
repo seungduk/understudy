@@ -5,48 +5,48 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/seungduk/understudy/internal/wire"
+	"github.com/seungduk/understudy/core"
+	"github.com/seungduk/understudy/harness"
 	"github.com/seungduk/understudy/script"
 )
 
-func req(t *testing.T, body string) wire.Request {
-	t.Helper()
-	r, err := wire.ParseRequest([]byte(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
+func text(role core.Role, s string) core.Turn {
+	return core.Turn{Role: role, Parts: []core.Part{{Kind: core.Text, Text: s}}}
 }
 
 func TestKey(t *testing.T) {
-	plain := req(t, `{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
-	sys := req(t, `{"model":"m","system":"x [understudy-session: t1/planner] y","messages":[{"role":"user","content":"[understudy-session: other]"}]}`)
-	user := req(t, `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"do it [understudy-session:t2/writer]"}]}]}`)
-	later := req(t, `{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"},{"role":"user","content":"[understudy-session: late]"}]}`)
-	bad := req(t, `{"model":"m","system":"[understudy-session: ]","messages":[{"role":"user","content":"a"}]}`)
+	plain := core.Request{Turns: []core.Turn{text(core.User, "hi")}}
+	sys := core.Request{System: "x [understudy-session: t1/planner] y", Turns: []core.Turn{text(core.User, "[understudy-session: other]")}}
+	sysTurn := core.Request{Turns: []core.Turn{text(core.System, "[understudy-session: dev/turn]"), text(core.User, "[understudy-session: other]")}}
+	user := core.Request{Turns: []core.Turn{text(core.User, "do it [understudy-session:t2/writer]")}}
+	second := core.Request{Turns: []core.Turn{text(core.User, "<environment_context/>"), text(core.User, "go [understudy-session: c/1]")}}
+	later := core.Request{Turns: []core.Turn{text(core.User, "a"), text(core.Assistant, "b"), text(core.User, "[understudy-session: late]")}}
+	bad := core.Request{System: "[understudy-session: ]", Turns: []core.Turn{text(core.User, "a")}}
 	hdr := http.Header{}
 	hdr.Set(SessionHeader, " t9/reviewer ")
 	badHdr := http.Header{}
 	badHdr.Set(SessionHeader, "has space")
 	cases := []struct {
-		h      http.Header
-		r      wire.Request
-		key    string
-		src    KeySource
-		badKey string
+		h   http.Header
+		r   core.Request
+		key string
+		src KeySource
+		bad string
 	}{
 		{http.Header{}, plain, "default", FromDefault, ""},
 		{hdr, sys, "t9/reviewer", FromHeader, ""},
 		{http.Header{}, sys, "t1/planner", FromSystemPrompt, ""},
+		{http.Header{}, sysTurn, "dev/turn", FromSystemPrompt, ""},
 		{http.Header{}, user, "t2/writer", FromUserPrompt, ""},
+		{http.Header{}, second, "c/1", FromUserPrompt, ""},
 		{http.Header{}, later, "default", FromDefault, ""},
 		{http.Header{}, bad, "", FromSystemPrompt, ""},
 		{badHdr, plain, "", FromHeader, "has space"},
 	}
 	for i, c := range cases {
-		v := Read(c.h, c.r)
-		if v.Key != c.key || v.KeySource != c.src || v.BadKey != c.badKey {
-			t.Errorf("%d: %+v", i, v)
+		k := SessionKey(c.h, c.r)
+		if k.Key != c.key || k.Source != c.src || k.Bad != c.bad {
+			t.Errorf("%d: %+v", i, k)
 		}
 	}
 	for s, want := range map[KeySource]string{FromHeader: "header", FromSystemPrompt: "system_prompt", FromUserPrompt: "user_prompt", FromDefault: "default", 0: "unknown"} {
@@ -57,42 +57,54 @@ func TestKey(t *testing.T) {
 }
 
 func TestHistoryAndCWD(t *testing.T) {
-	r := req(t, `{"model":"m","messages":[
-	{"role":"user","content":"go"},
-	{"role":"system","content":[{"type":"text","text":"# Environment\n - Primary working directory: /tmp/w x\n - Platform: darwin"}]},
-	{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}},{"type":"tool_use","id":"t2","name":"Bash","input":{}}]},
-	{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file"},{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":"Exit code 1"}]},
-	{"role":"assistant","content":[{"type":"text","text":"hm"}]},
-	{"role":"user","content":[{"type":"tool_result","tool_use_id":"zz","content":"orphan"}]}]}`)
-	v := Read(http.Header{}, r)
-	want := [][]script.Result{nil, {{Tool: "Read", Text: "file"}, {Tool: "Bash", IsError: true, Text: "Exit code 1"}}, {{Tool: "", Text: "orphan"}}}
-	if !reflect.DeepEqual(v.History, want) {
-		t.Errorf("history %+v", v.History)
+	cc, _ := harness.Lookup(string(harness.ClaudeCode))
+	r := core.Request{Turns: []core.Turn{
+		text(core.User, "go"),
+		text(core.System, "# Environment\n - Primary working directory: /tmp/w x\n - Platform: darwin"),
+		{Role: core.Assistant, Parts: []core.Part{{Kind: core.ToolCall, CallID: "t1", Tool: "Read"}, {Kind: core.ToolCall, CallID: "t2", Tool: "Bash"}}},
+		{Role: core.User, Parts: []core.Part{{Kind: core.ToolResult, CallID: "t1", Text: "file", Mark: core.MarkedOK},
+			{Kind: core.ToolResult, CallID: "t2", Mark: core.MarkedError, Text: "Exit code 1"}}},
+		text(core.Assistant, "hm"),
+		{Role: core.User, Parts: []core.Part{{Kind: core.ToolResult, CallID: "zz", Text: "orphan"}, {Kind: core.ToolResult, Tool: "Bash", Text: "named by the wire"}}},
+	}}
+	want := [][]script.Result{nil,
+		{{Tool: "Read", Action: core.ReadFile, Text: "file"}, {Tool: "Bash", Action: core.Shell, IsError: true, Text: "Exit code 1", Exit: 1, HasExit: true}},
+		{{Tool: "", Text: "orphan"}, {Tool: "Bash", Action: core.Shell, Text: "named by the wire", HasExit: true}}}
+	if got := History(r, cc); !reflect.DeepEqual(got, want) {
+		t.Errorf("history %+v", got)
 	}
-	if v.CWD != "/tmp/w x" {
-		t.Errorf("cwd %q", v.CWD)
+	if d := WorkingDir(r, cc); d != "/tmp/w x" {
+		t.Errorf("cwd %q", d)
 	}
-	if v := Read(http.Header{}, req(t, `{"model":"m","system":"Working directory: /a","messages":[{"role":"user","content":"x"}]}`)); v.CWD != "/a" {
-		t.Errorf("system cwd %q", v.CWD)
+	if d := WorkingDir(core.Request{System: "Working directory: /a", Turns: []core.Turn{text(core.User, "x")}}, cc); d != "/a" {
+		t.Errorf("system cwd %q", d)
 	}
-	if v := Read(http.Header{}, req(t, `{"model":"m","messages":[{"role":"user","content":"x"}]}`)); v.CWD != "" || len(v.History) != 1 {
-		t.Errorf("none %+v", v)
+	plain := core.Request{Turns: []core.Turn{text(core.User, "x")}}
+	if d := WorkingDir(plain, cc); d != "" || len(History(plain, cc)) != 1 {
+		t.Error("none")
 	}
 }
 
 func TestPrompt(t *testing.T) {
-	cases := []struct{ body, want string }{
-		{`{"model":"m","messages":[{"role":"user","content":"fix the bug"}]}`, "fix the bug"},
-		{`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>x</system-reminder>"},{"type":"text","text":"  "},{"type":"text","text":"task"}]}]}`, "<system-reminder>x</system-reminder>\n\ntask"},
-		{`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"out"}]}]}`, ""},
-		{`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"out"},{"type":"text","text":"also this"}]}]}`, "also this"},
-		{`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":"prefill"}]}`, ""},
-		{`{"model":"m","messages":[{"role":"user","content":"task"},{"role":"system","content":"env"}]}`, "task"},
-		{`{"model":"m","messages":[{"role":"system","content":"env"}]}`, ""},
+	call := core.Turn{Role: core.Assistant, Parts: []core.Part{{Kind: core.ToolCall, CallID: "t", Tool: "Bash"}}}
+	result := core.Part{Kind: core.ToolResult, CallID: "t", Text: "out"}
+	cases := []struct {
+		turns []core.Turn
+		want  string
+	}{
+		{[]core.Turn{text(core.User, "fix the bug")}, "fix the bug"},
+		{[]core.Turn{{Role: core.User, Parts: []core.Part{{Kind: core.Text, Text: "<system-reminder>x</system-reminder>"}, {Kind: core.Text, Text: "  "}, {Kind: core.Text, Text: "task"}}}},
+			"<system-reminder>x</system-reminder>\n\ntask"},
+		{[]core.Turn{text(core.User, "a"), call, {Role: core.User, Parts: []core.Part{result}}}, ""},
+		{[]core.Turn{text(core.User, "a"), call, {Role: core.User, Parts: []core.Part{result, {Kind: core.Text, Text: "also this"}}}}, "also this"},
+		{[]core.Turn{text(core.User, "a"), text(core.Assistant, "prefill")}, ""},
+		{[]core.Turn{text(core.User, "task"), text(core.System, "env")}, "task"},
+		{[]core.Turn{text(core.System, "env")}, ""},
+		{[]core.Turn{text(core.User, "<environment_context/>"), text(core.User, "the task")}, "the task"},
 	}
-	for _, c := range cases {
-		if got := Read(http.Header{}, req(t, c.body)).Prompt; got != c.want {
-			t.Errorf("%s: prompt %q, want %q", c.body, got, c.want)
+	for i, c := range cases {
+		if got := Prompt(core.Request{Turns: c.turns}); got != c.want {
+			t.Errorf("%d: prompt %q, want %q", i, got, c.want)
 		}
 	}
 }

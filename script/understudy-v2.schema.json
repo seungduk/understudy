@@ -1,0 +1,852 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/seungduk/understudy/raw/main/script/understudy-v2.schema.json",
+  "title": "understudy script (understudy/v2)",
+  "$ref": "#/$defs/file",
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "enum": [
+            "understudy/v2",
+            "understudy/v1"
+          ],
+          "description": "The format version: understudy/v2 (this schema). v1 scripts are read as before; v2 adds harness, neutral actions and the daily and per_minute windows."
+        },
+        "divergence": {
+          "type": "string",
+          "description": "What happens when a request does not fit the script. strict (default): answer 400 and stop the run; lenient: log it and go on.",
+          "enum": [
+            "strict",
+            "lenient"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "sessions": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Session key -> its steps. Keys come from the X-Understudy-Session header or [understudy-session: KEY] in the prompt; a request that names none is the session 'default'.",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/session"
+          }
+        },
+        "harness": {
+          "$ref": "#/$defs/harnessName",
+          "description": "The harness every session runs in; a session's harness overrides it. Leave it out to let the server tell from the request."
+        }
+      },
+      "required": [
+        "schema",
+        "sessions"
+      ],
+      "description": "An understudy script."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "written",
+            "recorded"
+          ]
+        },
+        "run": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "seat": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string",
+          "description": "The recorded Claude Code session id."
+        },
+        "recorded_at": {
+          "type": "string",
+          "description": "RFC 3339 time",
+          "format": "date-time"
+        },
+        "cli_version": {
+          "type": "string",
+          "description": "Claude Code version of the recording"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "description": "Where the script came from."
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/step"
+          },
+          "minItems": 1
+        },
+        "harness": {
+          "$ref": "#/$defs/harnessName",
+          "description": "The harness this session runs in."
+        }
+      },
+      "required": [
+        "steps"
+      ],
+      "description": "Steps in order; step i answers the request with i assistant turns in its history, unless next moved the position."
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique in the session: lower-case letters, digits, - and _.",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "expect": {
+          "$ref": "#/$defs/matcher"
+        },
+        "reply": {
+          "$ref": "#/$defs/reply"
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reply"
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "description": "Answers for the 1st, 2nd, ... request at this turn; the last repeats."
+        },
+        "next": {
+          "type": "string",
+          "description": "The step after this one (default: the following step)."
+        },
+        "cases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case"
+          },
+          "minItems": 1,
+          "description": "Answers chosen by the tool results: the first case whose when matches."
+        },
+        "otherwise": {
+          "$ref": "#/$defs/branch"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "description": "One turn. Exactly one of reply, attempts or cases.",
+      "oneOf": [
+        {
+          "required": [
+            "reply"
+          ]
+        },
+        {
+          "required": [
+            "attempts"
+          ]
+        },
+        {
+          "required": [
+            "cases"
+          ]
+        }
+      ]
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "$ref": "#/$defs/matcher"
+        },
+        "reply": {
+          "$ref": "#/$defs/reply"
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reply"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "next": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "when"
+      ],
+      "description": "Exactly one of reply or attempts.",
+      "oneOf": [
+        {
+          "required": [
+            "reply"
+          ]
+        },
+        {
+          "required": [
+            "attempts"
+          ]
+        }
+      ]
+    },
+    "branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reply": {
+          "$ref": "#/$defs/reply"
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reply"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "next": {
+          "type": "string"
+        }
+      },
+      "description": "Exactly one of reply or attempts.",
+      "oneOf": [
+        {
+          "required": [
+            "reply"
+          ]
+        },
+        {
+          "required": [
+            "attempts"
+          ]
+        }
+      ]
+    },
+    "matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "$ref": "#/$defs/toolName"
+        },
+        "result": {
+          "type": "string",
+          "description": "ok or error",
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "The exit code the result shows, as the harness profile reads it (0 for a shell result that is not an error)."
+        },
+        "contains": {
+          "type": "string",
+          "minLength": 1
+        },
+        "regex": {
+          "type": "string",
+          "description": "RE2 regular expression",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "shell",
+            "read",
+            "write",
+            "edit"
+          ],
+          "description": "The neutral action the result answers (any harness's tool for it)."
+        }
+      },
+      "description": "Tests the tool results the request carries; every given field must hold for one result.",
+      "minProperties": 1
+    },
+    "reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/message"
+        },
+        "tool_use": {
+          "$ref": "#/$defs/tool_use"
+        },
+        "http_error": {
+          "$ref": "#/$defs/http_error"
+        },
+        "stream_error": {
+          "$ref": "#/$defs/stream_error"
+        },
+        "limit": {
+          "$ref": "#/$defs/limit"
+        },
+        "stall": {
+          "$ref": "#/$defs/stall"
+        },
+        "cut": {
+          "$ref": "#/$defs/cut"
+        },
+        "pace": {
+          "$ref": "#/$defs/pace"
+        }
+      },
+      "description": "Exactly one kind (message, tool_use, http_error, stream_error, limit), plus optional faults (stall, cut, pace).",
+      "oneOf": [
+        {
+          "required": [
+            "message"
+          ]
+        },
+        {
+          "required": [
+            "tool_use"
+          ]
+        },
+        {
+          "required": [
+            "http_error"
+          ]
+        },
+        {
+          "required": [
+            "stream_error"
+          ]
+        },
+        {
+          "required": [
+            "limit"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "thinking": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stop": {
+          "type": "string",
+          "enum": [
+            "end_turn",
+            "max_tokens"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "description": "A final answer; the turn ends."
+    },
+    "tool_use": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "thinking": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/call"
+          }
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "description": "Calls tools; the client runs them and sends the results."
+    },
+    "call": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "$ref": "#/$defs/toolName"
+        },
+        "input": {
+          "type": "object",
+          "description": "The tool's input, sent as written; {{cwd}} in a string becomes the client's working directory."
+        },
+        "shell": {
+          "$ref": "#/$defs/shell"
+        },
+        "read": {
+          "$ref": "#/$defs/read"
+        },
+        "write": {
+          "$ref": "#/$defs/write"
+        },
+        "edit": {
+          "$ref": "#/$defs/edit"
+        }
+      },
+      "description": "A native call {tool, input} sent as written, or exactly one neutral action that the harness profile turns into its own tool call.",
+      "oneOf": [
+        {
+          "required": [
+            "tool",
+            "input"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "shell"
+                ]
+              },
+              {
+                "required": [
+                  "read"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "edit"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "shell"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "tool"
+                ]
+              },
+              {
+                "required": [
+                  "input"
+                ]
+              },
+              {
+                "required": [
+                  "read"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "edit"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "read"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "tool"
+                ]
+              },
+              {
+                "required": [
+                  "input"
+                ]
+              },
+              {
+                "required": [
+                  "shell"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              },
+              {
+                "required": [
+                  "edit"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "write"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "tool"
+                ]
+              },
+              {
+                "required": [
+                  "input"
+                ]
+              },
+              {
+                "required": [
+                  "shell"
+                ]
+              },
+              {
+                "required": [
+                  "read"
+                ]
+              },
+              {
+                "required": [
+                  "edit"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "edit"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "tool"
+                ]
+              },
+              {
+                "required": [
+                  "input"
+                ]
+              },
+              {
+                "required": [
+                  "shell"
+                ]
+              },
+              {
+                "required": [
+                  "read"
+                ]
+              },
+              {
+                "required": [
+                  "write"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "http_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/errorKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retry_after_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400
+        },
+        "retry": {
+          "type": "string",
+          "description": "x-should-retry header: default (none), never (false), always (true)",
+          "enum": [
+            "default",
+            "never",
+            "always"
+          ]
+        }
+      },
+      "required": [
+        "error"
+      ]
+    },
+    "stream_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/errorKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "partial_text": {
+          "type": "string",
+          "description": "Text streamed before the error."
+        }
+      },
+      "required": [
+        "error"
+      ]
+    },
+    "limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "window": {
+          "type": "string",
+          "enum": [
+            "five_hour",
+            "seven_day",
+            "seven_day_opus",
+            "seven_day_sonnet",
+            "daily",
+            "per_minute"
+          ],
+          "description": "The window that ran out. daily and per_minute are v2."
+        },
+        "resets_in_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31536000
+        }
+      },
+      "required": [
+        "window",
+        "resets_in_seconds"
+      ],
+      "description": "A usage limit, in each protocol's own form (see README: Anthropic unified headers, OpenAI usage_limit_reached, Gemini RESOURCE_EXHAUSTED)."
+    },
+    "stall": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "gate": {
+          "$ref": "#/$defs/gateName"
+        },
+        "at": {
+          "type": "string",
+          "enum": [
+            "before_response",
+            "mid_stream"
+          ]
+        }
+      },
+      "description": "Hold the reply for seconds, or until the gate is released. Exactly one of seconds or gate.",
+      "oneOf": [
+        {
+          "required": [
+            "seconds"
+          ]
+        },
+        {
+          "required": [
+            "gate"
+          ]
+        }
+      ]
+    },
+    "cut": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "after_events": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "description": "SSE events sent before the cut; 0 cuts before the response."
+        },
+        "how": {
+          "type": "string",
+          "enum": [
+            "close",
+            "reset"
+          ]
+        }
+      },
+      "required": [
+        "after_events",
+        "how"
+      ]
+    },
+    "pace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "first_event_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "between_events_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
+        }
+      }
+    },
+    "errorKind": {
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "authentication",
+        "billing",
+        "permission",
+        "not_found",
+        "request_too_large",
+        "rate_limit",
+        "api_error",
+        "timeout",
+        "overloaded"
+      ],
+      "description": "invalid_request 400, authentication 401, billing 402, permission 403, not_found 404, request_too_large 413, rate_limit 429, api_error 500, timeout 504, overloaded 529"
+    },
+    "gateName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+    },
+    "toolName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$",
+      "description": "A tool as the harness names it: Claude Code Read, Edit, Write, Bash; Codex exec_command, apply_patch; opencode bash, read, edit, write; ..."
+    },
+    "harnessName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "A harness profile: claude-code, codex, opencode, pi, gemini-cli, antigravity (see README).",
+      "examples": [
+        "claude-code",
+        "codex",
+        "opencode",
+        "pi",
+        "gemini-cli",
+        "antigravity"
+      ]
+    },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The shell command, run in the session's working directory."
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "description": "Run a shell command."
+    },
+    "read": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path; {{cwd}} is the working directory."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "description": "Read a file."
+    },
+    "write": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "description": "Create or overwrite a file."
+    },
+    "edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "old": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Text that occurs once in the file (whole lines for codex)."
+        },
+        "new": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "old",
+        "new"
+      ],
+      "description": "Replace old with new in a file."
+    }
+  }
+}

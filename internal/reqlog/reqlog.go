@@ -74,6 +74,9 @@ type Entry struct {
 	Path          string            `json:"path"`
 	Status        int               `json:"status,omitempty"`
 	Outcome       Outcome           `json:"outcome"`
+	Protocol      string            `json:"protocol,omitempty"` // the wire protocol: anthropic, openai-chat, openai-responses, gemini
+	Harness       string            `json:"harness,omitempty"`  // the harness profile that read the request
+	Aux           string            `json:"aux,omitempty"`      // a side request (a title, a routing call) answered without the script
 	Model         string            `json:"model,omitempty"`
 	Stream        bool              `json:"stream,omitempty"`
 	Session       string            `json:"session,omitempty"`

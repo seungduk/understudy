@@ -38,18 +38,22 @@ func freeObject() field     { return field{kind: vFreeJSON} }
 // shapes is every object of the format and its fields. schema_test.go checks
 // that the published JSON Schema says the same.
 var shapes = map[string]map[string]field{
-	"file":       {"schema": str(), "divergence": str(), "provenance": obj("provenance"), "sessions": mapOf("session")},
+	"file":       {"schema": str(), "divergence": str(), "provenance": obj("provenance"), "harness": str(), "sessions": mapOf("session")},
 	"provenance": {"source": str(), "run": str(), "task": str(), "seat": str(), "session": str(), "recorded_at": str(), "cli_version": str(), "note": str()},
-	"session":    {"steps": listOf("step")},
+	"session":    {"harness": str(), "steps": listOf("step")},
 	"step": {"name": str(), "expect": obj("matcher"), "reply": obj("reply"), "attempts": listOf("reply"), "next": str(),
 		"cases": listOf("case"), "otherwise": obj("branch")},
 	"case":         {"when": obj("matcher"), "reply": obj("reply"), "attempts": listOf("reply"), "next": str()},
 	"branch":       {"reply": obj("reply"), "attempts": listOf("reply"), "next": str()},
-	"matcher":      {"tool": str(), "result": str(), "exit_code": num(), "contains": str(), "regex": str()},
+	"matcher":      {"tool": str(), "action": str(), "result": str(), "exit_code": num(), "contains": str(), "regex": str()},
 	"reply":        {"message": obj("message"), "tool_use": obj("tool_use"), "http_error": obj("http_error"), "stream_error": obj("stream_error"), "limit": obj("limit"), "stall": obj("stall"), "cut": obj("cut"), "pace": obj("pace")},
 	"message":      {"thinking": str(), "text": str(), "stop": str()},
 	"tool_use":     {"thinking": str(), "text": str(), "calls": listOf("call")},
-	"call":         {"tool": str(), "input": freeObject()},
+	"call":         {"tool": str(), "input": freeObject(), "shell": obj("shell"), "read": obj("read"), "write": obj("write"), "edit": obj("edit")},
+	"shell":        {"command": str()},
+	"read":         {"path": str()},
+	"write":        {"path": str(), "content": str()},
+	"edit":         {"path": str(), "old": str(), "new": str()},
 	"http_error":   {"error": str(), "message": str(), "retry_after_seconds": num(), "retry": str()},
 	"stream_error": {"error": str(), "message": str(), "partial_text": str()},
 	"limit":        {"window": str(), "resets_in_seconds": num()},
@@ -99,7 +103,7 @@ func parseFile(data []byte) (File, lines, error) {
 			Fix: "fix the YAML syntax at the line named; indent with spaces, quote strings that hold ': ' or start with special characters"}}
 	}
 	if root.Kind == 0 || len(root.Content) == 0 {
-		return File{}, nil, Problems{{Rule: RuleRequired, Message: "the file is empty", Fix: "start the file with 'schema: " + SchemaV1 + "' and a 'sessions:' map"}}
+		return File{}, nil, Problems{{Rule: RuleRequired, Message: "the file is empty", Fix: "start the file with 'schema: " + SchemaV2 + "' and a 'sessions:' map"}}
 	}
 	doc := root.Content[0]
 	ls := lines{}

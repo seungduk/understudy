@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seungduk/understudy/internal/wire"
+	"github.com/seungduk/understudy/core"
 )
 
 // Script is a checked script, ready to run. It is immutable.
@@ -21,9 +21,10 @@ type Script struct {
 
 // SessionPlan is the checked steps of one session.
 type SessionPlan struct {
-	key    string
-	steps  []*stepPlan
-	byName map[string]int
+	key     string
+	harness string
+	steps   []*stepPlan
+	byName  map[string]int
 }
 
 type stepPlan struct {
@@ -47,6 +48,7 @@ type branch struct {
 type matcher struct {
 	src      Matcher
 	tool     string
+	action   core.Action
 	result   Outcome
 	exitCode *int
 	contains string
@@ -57,6 +59,7 @@ var (
 	sessionKeyRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
 	stepNameRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	toolNameRe   = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$`)
+	harnessRe    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	templateRe   = regexp.MustCompile(`\{\{[^}]*\}\}`)
 )
 
@@ -94,6 +97,14 @@ func MustCompile(f File) *Script {
 type checker struct {
 	ls lines
 	ps Problems
+	v2 bool // the script is understudy/v2
+}
+
+// needV2 reports a v2-only field in a v1 script.
+func (c *checker) needV2(path, what string) {
+	if !c.v2 {
+		c.add(path, RuleSchema, what+" needs schema "+SchemaV2, "change the first line to 'schema: "+SchemaV2+"' (v2 reads every v1 script the same way)")
+	}
 }
 
 func (c *checker) add(path string, rule Rule, msg, fix string) {
@@ -105,16 +116,20 @@ func enumFix(field string, vals ...string) string {
 }
 
 func compile(f File, ls lines) (*Script, Problems) {
-	c := &checker{ls: ls}
+	c := &checker{ls: ls, v2: f.Schema == SchemaV2}
 	if ls == nil {
 		c.ls = lines{}
 	}
-	if f.Schema != SchemaV1 {
+	if f.Schema != SchemaV1 && f.Schema != SchemaV2 {
 		msg := "the schema is missing"
 		if f.Schema != "" {
-			msg = fmt.Sprintf("the schema is %q, this version reads only %q", f.Schema, SchemaV1)
+			msg = fmt.Sprintf("the schema is %q, this version reads %q and %q", f.Schema, SchemaV1, SchemaV2)
 		}
-		c.add("schema", RuleSchema, msg, "put 'schema: "+SchemaV1+"' as the first line")
+		c.add("schema", RuleSchema, msg, "put 'schema: "+SchemaV2+"' as the first line")
+	}
+	if f.Harness != "" {
+		c.needV2("harness", "harness")
+		c.harnessName(f.Harness, "harness")
 	}
 	div := f.Divergence
 	switch div {
@@ -153,9 +168,22 @@ func compile(f File, ls lines) (*Script, Problems) {
 			c.add(path, RulePattern, fmt.Sprintf("the session key %q has characters a key cannot have", k),
 				"use 1-128 letters, digits and . _ : / @ + -, starting with a letter or digit, such as task-17/writer")
 		}
-		s.sessions[k] = c.session(k, f.Sessions[k], path)
+		sp := c.session(k, f.Sessions[k], path)
+		sp.harness = f.Harness
+		if h := f.Sessions[k].Harness; h != "" {
+			c.needV2(path+".harness", "harness")
+			c.harnessName(h, path+".harness")
+			sp.harness = h
+		}
+		s.sessions[k] = sp
 	}
 	return s, c.ps
+}
+
+func (c *checker) harnessName(h, p string) {
+	if !harnessRe.MatchString(h) {
+		c.add(p, RulePattern, fmt.Sprintf("%q is not a harness name", h), "write the harness's name in lower case, such as claude-code, codex, opencode, pi, gemini-cli or antigravity")
+	}
 }
 
 func (c *checker) session(key string, ses Session, path string) *SessionPlan {
@@ -269,11 +297,19 @@ func (c *checker) branch(r *Reply, attempts []Reply, next, p string, names map[s
 
 func (c *checker) matcher(m Matcher, p string) *matcher {
 	cm := &matcher{src: m, tool: m.Tool, result: m.Result, exitCode: m.ExitCode, contains: m.Contains}
-	if m.Tool == "" && m.Result == "" && m.ExitCode == nil && m.Contains == "" && m.Regex == "" {
-		c.add(p, RuleRequired, "the test is empty", "give at least one of: tool, result (ok or error), exit_code, contains, regex")
+	if m.Tool == "" && m.Action == "" && m.Result == "" && m.ExitCode == nil && m.Contains == "" && m.Regex == "" {
+		c.add(p, RuleRequired, "the test is empty", "give at least one of: tool, action, result (ok or error), exit_code, contains, regex")
 	}
 	if m.Tool != "" && !toolNameRe.MatchString(m.Tool) {
-		c.add(p+".tool", RulePattern, fmt.Sprintf("%q is not a tool name", m.Tool), "write the tool's name as Claude Code calls it, such as Bash or Edit")
+		c.add(p+".tool", RulePattern, fmt.Sprintf("%q is not a tool name", m.Tool), "write the tool's name as the harness calls it, such as Bash or exec_command")
+	}
+	if m.Action != "" {
+		c.needV2(p+".action", "action")
+		a, ok := core.ParseAction(m.Action)
+		if !ok {
+			c.add(p+".action", RuleEnum, fmt.Sprintf("unknown action %q", m.Action), enumFix("action", core.ActionNames()...))
+		}
+		cm.action = a
 	}
 	switch m.Result {
 	case "", OK, Error:
@@ -340,16 +376,7 @@ func (c *checker) reply(r Reply, p string) {
 			c.add(p+".tool_use.calls", RuleRange, fmt.Sprintf("%d calls, at most %d", len(t.Calls), MaxCalls), "split the calls over several steps")
 		}
 		for i, call := range t.Calls {
-			cp := fmt.Sprintf("%s.tool_use.calls[%d]", p, i)
-			if call.Tool == "" {
-				c.add(cp+".tool", RuleRequired, "the call has no tool", "name the tool, such as tool: Read")
-			} else if !toolNameRe.MatchString(call.Tool) {
-				c.add(cp+".tool", RulePattern, fmt.Sprintf("%q is not a tool name", call.Tool), "write the tool's name as Claude Code calls it, such as Bash or Edit")
-			}
-			if call.Input == nil {
-				c.add(cp+".input", RuleRequired, "the call has no input", "add input: with the tool's fields, such as {file_path: \"{{cwd}}/a.txt\"}; write input: {} for a tool without fields")
-			}
-			c.templates(call.Input, cp+".input")
+			c.call(call, fmt.Sprintf("%s.tool_use.calls[%d]", p, i))
 		}
 	case r.HTTPError != nil:
 		e := r.HTTPError
@@ -368,10 +395,12 @@ func (c *checker) reply(r Reply, p string) {
 		l := r.Limit
 		switch l.Window {
 		case FiveHour, SevenDay, SevenDayOpus, SevenDaySonnet:
+		case Daily, PerMinute:
+			c.needV2(p+".limit.window", "window "+string(l.Window))
 		case "":
-			c.add(p+".limit.window", RuleRequired, "the limit has no window", enumFix("window", "five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"))
+			c.add(p+".limit.window", RuleRequired, "the limit has no window", enumFix("window", core.WindowNames()...))
 		default:
-			c.add(p+".limit.window", RuleEnum, fmt.Sprintf("unknown window %q", l.Window), enumFix("window", "five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"))
+			c.add(p+".limit.window", RuleEnum, fmt.Sprintf("unknown window %q", l.Window), enumFix("window", core.WindowNames()...))
 		}
 		if l.ResetsInSeconds < 1 || l.ResetsInSeconds > MaxResetsInSeconds {
 			c.add(p+".limit.resets_in_seconds", RuleRange, fmt.Sprintf("resets_in_seconds %d is outside 1-%d", l.ResetsInSeconds, MaxResetsInSeconds), "write how many seconds until the limit resets, such as 3600")
@@ -428,14 +457,72 @@ func (c *checker) reply(r Reply, p string) {
 	}
 }
 
-func (c *checker) errorName(name, p string) {
-	if name == "" {
-		c.add(p, RuleRequired, "the error has no kind", enumFix("error", wire.ErrorKindNames()...))
+func (c *checker) call(call Call, cp string) {
+	type form struct {
+		name string
+		set  bool
+	}
+	forms := []form{{"shell", call.Shell != nil}, {"read", call.Read != nil}, {"write", call.Write != nil}, {"edit", call.Edit != nil}}
+	var actions []string
+	for _, f := range forms {
+		if f.set {
+			actions = append(actions, f.name)
+		}
+	}
+	const fix = "write a native call {tool: Name, input: {...}}, or (v2) one action: shell: {command}, read: {path}, write: {path, content} or edit: {path, old, new}"
+	switch {
+	case len(actions) > 1:
+		c.add(cp, RuleOneOf, "the call has several actions: "+strings.Join(actions, ", "), fix)
+		return
+	case len(actions) == 1 && (call.Tool != "" || call.Input != nil):
+		c.add(cp, RuleOneOf, "the call has both a tool and the action "+actions[0], fix)
+		return
+	case len(actions) == 1:
+		c.needV2(cp+"."+actions[0], "the "+actions[0]+" action")
+		req := func(field, v, what string) {
+			if v == "" {
+				c.add(cp+"."+actions[0]+"."+field, RuleRequired, "the "+actions[0]+" action has no "+field, what)
+			}
+		}
+		switch {
+		case call.Shell != nil:
+			req("command", call.Shell.Command, "write the shell command, such as command: go test ./...")
+			c.templates(call.Shell.Command, cp+".shell.command")
+		case call.Read != nil:
+			req("path", call.Read.Path, "write the file's absolute path, such as path: \"{{cwd}}/main.go\"")
+			c.templates(call.Read.Path, cp+".read.path")
+		case call.Write != nil:
+			req("path", call.Write.Path, "write the file's absolute path, such as path: \"{{cwd}}/main.go\"")
+			c.templates(call.Write.Path, cp+".write.path")
+			c.templates(call.Write.Content, cp+".write.content")
+		case call.Edit != nil:
+			req("path", call.Edit.Path, "write the file's absolute path, such as path: \"{{cwd}}/main.go\"")
+			req("old", call.Edit.Old, "write the text to replace; it must occur once in the file")
+			c.templates(call.Edit.Path, cp+".edit.path")
+			c.templates(call.Edit.Old, cp+".edit.old")
+			c.templates(call.Edit.New, cp+".edit.new")
+		}
 		return
 	}
-	if _, ok := wire.ParseErrorKind(name); !ok {
-		fix := enumFix("error", wire.ErrorKindNames()...)
-		if cl := closest(name, wire.ErrorKindNames()); cl != "" {
+	if call.Tool == "" {
+		c.add(cp+".tool", RuleRequired, "the call has no tool", "name the tool, such as tool: Read, or (v2) use an action such as read: {path: ...}")
+	} else if !toolNameRe.MatchString(call.Tool) {
+		c.add(cp+".tool", RulePattern, fmt.Sprintf("%q is not a tool name", call.Tool), "write the tool's name as the harness calls it, such as Bash or exec_command")
+	}
+	if call.Input == nil {
+		c.add(cp+".input", RuleRequired, "the call has no input", "add input: with the tool's fields, such as {file_path: \"{{cwd}}/a.txt\"}; write input: {} for a tool without fields")
+	}
+	c.templates(call.Input, cp+".input")
+}
+
+func (c *checker) errorName(name, p string) {
+	if name == "" {
+		c.add(p, RuleRequired, "the error has no kind", enumFix("error", core.ErrorKindNames()...))
+		return
+	}
+	if _, ok := core.ParseErrorKind(name); !ok {
+		fix := enumFix("error", core.ErrorKindNames()...)
+		if cl := closest(name, core.ErrorKindNames()); cl != "" {
 			fix = "did you mean " + cl + "? " + fix
 		}
 		c.add(p, RuleEnum, fmt.Sprintf("unknown error %q", name), fix)
@@ -464,6 +551,23 @@ func (c *checker) templates(v any, p string) {
 			c.templates(e, fmt.Sprintf("%s[%d]", p, i))
 		}
 	}
+}
+
+// Harness is the harness the session names (its own, or the file's); "" when neither names one.
+func (p *SessionPlan) Harness() string { return p.harness }
+
+// Harnesses is every harness name the script uses, sorted, without repeats.
+func (s *Script) Harnesses() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range s.sessions {
+		if p.harness != "" && !seen[p.harness] {
+			seen[p.harness] = true
+			out = append(out, p.harness)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Divergence is the script's divergence policy (strict when not written).

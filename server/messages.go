@@ -1,8 +1,6 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,22 +11,45 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/seungduk/understudy/core"
+	"github.com/seungduk/understudy/harness"
 	"github.com/seungduk/understudy/internal/conv"
 	"github.com/seungduk/understudy/internal/deliver"
+	"github.com/seungduk/understudy/internal/protocol/registry"
 	"github.com/seungduk/understudy/internal/reqlog"
-	"github.com/seungduk/understudy/internal/wire"
+	"github.com/seungduk/understudy/protocol"
 	"github.com/seungduk/understudy/script"
 )
 
 // MaxBody is the largest request body read.
 const MaxBody = 64 << 20
 
+// routes registers every codec's routes; a route several codecs share goes to
+// the first codec that accepts the request, else to the last of them.
 func (s *Server) routes() {
-	s.mux.HandleFunc("POST /v1/messages", s.messages)
-	s.mux.HandleFunc("POST /v1/messages/count_tokens", s.countTokens)
-	s.mux.HandleFunc("GET /v1/models", s.listModels)
-	s.mux.HandleFunc("GET /v1/models/{id}", s.getModel)
-	s.mux.HandleFunc("/api/hello", s.hello)
+	byPattern := map[string][]protocol.Codec{}
+	var order []string
+	for _, c := range registry.All() {
+		for _, p := range c.Routes() {
+			if byPattern[p] == nil {
+				order = append(order, p)
+			}
+			byPattern[p] = append(byPattern[p], c)
+		}
+	}
+	for _, p := range order {
+		cs := byPattern[p]
+		s.mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+			c := cs[len(cs)-1]
+			for _, x := range cs {
+				if x.Accepts(r) {
+					c = x
+					break
+				}
+			}
+			s.serve(c, w, r)
+		})
+	}
 	s.controlRoutes()
 	s.mux.HandleFunc("/", s.notFound)
 }
@@ -45,74 +66,158 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// refuse answers with an API error that tells the client not to retry, and logs why.
-func (s *Server) refuse(w http.ResponseWriter, seq int, outcome reqlog.Outcome, kind wire.ErrorKind, msg string) {
-	s.log.Update(seq, func(e *Entry) { e.Outcome, e.Status, e.Error = outcome, kind.Status(), msg })
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Request-Id", requestID(seq))
-	w.Header().Set("X-Should-Retry", "false")
-	w.WriteHeader(kind.Status())
-	_, _ = w.Write(wire.ErrorBody(kind, msg, requestID(seq)))
+func write(w http.ResponseWriter, e protocol.Encoded) {
+	for k, v := range e.Header {
+		w.Header()[k] = v
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.WriteHeader(e.Status)
+	_, _ = w.Write(e.Body)
 }
 
-func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
-	seq := s.log.Add(s.entry(r))
+// refuse answers with an API error that tells the client not to retry, and logs why.
+func (s *Server) refuse(c protocol.Codec, w http.ResponseWriter, seq int, m protocol.Meta, outcome reqlog.Outcome, kind core.ErrorKind, msg string) {
+	m.Stream = false
+	e := c.Encode(m, protocol.Out{Kind: protocol.OutError, Error: protocol.ErrorSpec{Kind: kind, Message: msg, Retry: core.RetryNever}})
+	s.log.Update(seq, func(en *Entry) { en.Outcome, en.Status, en.Error = outcome, e.Status, msg })
+	write(w, e)
+}
+
+func (s *Server) serve(c protocol.Codec, w http.ResponseWriter, r *http.Request) {
+	en := s.entry(r)
+	en.Protocol = c.ID().Name()
+	seq := s.log.Add(en)
+	meta := protocol.Meta{RequestID: requestID(seq), Now: s.clk.Now(), Seed: requestID(seq)}
 	body, err := io.ReadAll(io.LimitReader(r.Body, MaxBody+1))
 	if err != nil {
 		s.log.Update(seq, func(e *Entry) { e.Outcome = reqlog.ClientGone })
 		return
 	}
 	if len(body) > MaxBody {
-		s.refuse(w, seq, reqlog.BadRequest, wire.RequestTooLarge, wire.RequestTooLarge.DefaultMessage())
+		s.refuse(c, w, seq, meta, reqlog.BadRequest, core.RequestTooLarge, fmt.Sprintf("understudy: the request body is larger than %d bytes", MaxBody))
 		return
 	}
-	req, err := wire.ParseRequest(body)
+	d, err := c.Decode(r, body)
 	if err != nil {
-		s.refuse(w, seq, reqlog.BadRequest, wire.InvalidRequest, err.Error())
+		s.refuse(c, w, seq, meta, reqlog.BadRequest, core.InvalidRequest, err.Error())
 		return
 	}
+	meta.Op = d.Op
+	other := func(o protocol.Out) {
+		e := c.Encode(meta, o)
+		s.log.Update(seq, func(en *Entry) { en.Outcome, en.Status = reqlog.Other, e.Status })
+		write(w, e)
+	}
+	switch d.Op {
+	case protocol.Probe:
+		other(protocol.Out{Kind: protocol.OutProbe})
+		return
+	case protocol.CountTokens:
+		other(protocol.Out{Kind: protocol.OutTokens, Tokens: core.EstimateTokens(len(body))})
+		return
+	case protocol.ListModels:
+		other(protocol.Out{Kind: protocol.OutModels, Models: s.modelIDs()})
+		return
+	case protocol.GetModel:
+		other(protocol.Out{Kind: protocol.OutModels, Models: []string{d.Model}})
+		return
+	}
+	s.generate(c, w, r, seq, meta, d.Request, len(body))
+}
+
+func (s *Server) modelIDs() []string {
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.models)+1)
+	for m := range s.models {
+		ids = append(ids, m)
+	}
+	s.mu.Unlock()
+	if len(ids) == 0 {
+		ids = append(ids, DefaultModel)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// profileFor is the harness that reads a request: the one the script's
+// session names, else the X-Understudy-Harness header, else the one whose tools
+// the request offers.
+func profileFor(plan *script.SessionPlan, h http.Header, p protocol.ID, req core.Request) (*harness.Profile, string) {
+	if plan != nil && plan.Harness() != "" {
+		if pr, ok := harness.Lookup(plan.Harness()); ok {
+			return pr, "script"
+		}
+	}
+	if name := strings.TrimSpace(h.Get(conv.HarnessHeader)); name != "" {
+		if pr, ok := harness.Lookup(name); ok {
+			return pr, "header"
+		}
+	}
+	return harness.Detect(p, req), "detected"
+}
+
+func (s *Server) generate(c protocol.Codec, w http.ResponseWriter, r *http.Request, seq int, meta protocol.Meta, req core.Request, bodyLen int) {
 	s.sawModel(req.Model)
-	v := conv.Read(r.Header, req)
+	meta.Model, meta.Stream = req.Model, req.Stream
+	meta.Usage.Input = core.EstimateTokens(bodyLen)
+	k := conv.SessionKey(r.Header, req)
+	sc := s.script.Load()
+	var plan *script.SessionPlan
+	if sc != nil && k.Key != "" {
+		plan, _ = sc.Session(k.Key)
+	}
+	pr, _ := profileFor(plan, r.Header, c.ID(), req)
+	history := conv.History(req, pr)
+	cwd := conv.WorkingDir(req, pr)
 	s.log.Update(seq, func(e *Entry) {
-		e.Model, e.Stream, e.Session, e.SessionSource = req.Model, req.Stream, v.Key, v.KeySource.String()
-		e.Turn, e.ToolsOffered, e.CWD, e.History = len(v.History)-1, len(req.ToolNames), v.CWD, logHistory(v.History)
-		e.Prompt = cutText(v.Prompt, reqlog.MaxPromptText)
+		e.Model, e.Stream, e.Session, e.SessionSource, e.Harness = req.Model, req.Stream, k.Key, k.Source.String(), string(pr.ID)
+		e.Turn, e.ToolsOffered, e.CWD, e.History = len(history)-1, len(req.Tools), cwd, logHistory(history)
+		e.Prompt = cutText(conv.Prompt(req), reqlog.MaxPromptText)
 	})
-	if v.BadKey != "" || v.Key == "" {
-		s.refuse(w, seq, reqlog.NoScript, wire.InvalidRequest, fmt.Sprintf(
-			"understudy: the session key %q (from the %s) is not a valid key. Fix: use 1-128 letters, digits and . _ : / @ + -, such as task-17/writer",
-			v.BadKey, v.KeySource))
+	if name, text, ok := pr.AuxReply(c.ID(), req); ok {
+		e := c.Encode(meta, protocol.Out{Kind: protocol.OutReply, Reply: core.Reply{Text: text, Stop: core.EndTurn}})
+		s.log.Update(seq, func(en *Entry) {
+			en.Aux, en.Reply, en.Status, en.Outcome = name, KindMessage, http.StatusOK, reqlog.Pending
+		})
+		out := deliver.Send(r.Context(), w, deliver.Plan{Status: e.Status, Headers: e.Header, Body: e.Body, Frames: e.Frames}, deliver.Deps{Clock: s.clk, Gates: s.gates})
+		s.log.Update(seq, func(en *Entry) { en.Outcome = out })
 		return
 	}
-	sc := s.script.Load()
+	if k.Bad != "" || k.Key == "" {
+		s.refuse(c, w, seq, meta, reqlog.NoScript, core.InvalidRequest, fmt.Sprintf(
+			"understudy: the session key %q (from the %s) is not a valid key. Fix: use 1-128 letters, digits and . _ : / @ + -, such as task-17/writer",
+			k.Bad, k.Source))
+		return
+	}
 	if sc == nil {
-		s.refuse(w, seq, reqlog.NoScript, wire.InvalidRequest,
+		s.refuse(c, w, seq, meta, reqlog.NoScript, core.InvalidRequest,
 			"understudy: no script is loaded. Fix: start with --script FILE, or PUT the script to "+ControlPrefix+"script")
 		return
 	}
-	plan, ok := sc.Session(v.Key)
-	if !ok {
-		s.refuse(w, seq, reqlog.NoScript, wire.InvalidRequest, fmt.Sprintf(
+	if plan == nil {
+		s.refuse(c, w, seq, meta, reqlog.NoScript, core.InvalidRequest, fmt.Sprintf(
 			"understudy: the script has no session %q (key from the %s). Fix: add sessions[%q] to the script, or send one of its keys (%s) in the %s header or as [understudy-session: KEY] in the system prompt",
-			v.Key, v.KeySource, v.Key, strings.Join(sc.Keys(), ", "), conv.SessionHeader))
+			k.Key, k.Source, k.Key, strings.Join(sc.Keys(), ", "), conv.SessionHeader))
 		return
 	}
-	ch := plan.Choose(v.History, sc.Divergence())
+	ch := plan.Choose(history, sc.Divergence())
 	s.log.Update(seq, func(e *Entry) {
 		e.Step, e.Branch, e.Divergence, e.Trace = ch.Step, ch.Branch, ch.Divergence, ch.Trace
 		if ch.Divergence != "" {
-			e.Expected, e.Actual = ch.Expected, actualOf(v.History[len(v.History)-1], ch.Turn)
+			e.Expected, e.Actual = ch.Expected, actualOf(history[len(history)-1], ch.Turn)
 		}
 	})
 	if ch.Attempts == nil {
-		s.refuse(w, seq, reqlog.Diverged, wire.InvalidRequest, "understudy: the request does not fit the script: "+ch.Divergence)
+		s.refuse(c, w, seq, meta, reqlog.Diverged, core.InvalidRequest, "understudy: the request does not fit the script: "+ch.Divergence)
 		return
 	}
-	n := s.nextAttempt(attemptKey{session: v.Key, step: ch.Step, branch: ch.Branch, turn: ch.Turn})
+	n := s.nextAttempt(attemptKey{session: k.Key, step: ch.Step, branch: ch.Branch, turn: ch.Turn})
 	reply := ch.Attempts[min(n, len(ch.Attempts))-1]
-	rc := renderCtx{session: v.Key, turn: ch.Turn, step: ch.Step, attempt: n, model: req.Model, cwd: v.CWD,
-		offered: req.ToolNames, stream: req.Stream, inputTokens: wire.EstimateTokens(len(body)), now: s.clk.Now(), seq: seq}
-	p, ans, div := render(reply, rc)
+	rc := renderCtx{session: k.Key, turn: ch.Turn, step: ch.Step, attempt: n, cwd: cwd, offered: req.Tools, profile: pr, now: s.clk.Now()}
+	meta.Seed = rc.id("")
+	out, faults, ans, div := render(reply, rc)
 	s.log.Update(seq, func(e *Entry) { e.Attempt, e.Reply, e.Answer = n, ans.Kind, &ans })
 	if div.text != "" {
 		s.log.Update(seq, func(e *Entry) {
@@ -125,16 +230,32 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		})
 		if sc.Divergence() != script.Lenient {
 			s.log.Update(seq, func(e *Entry) { e.Answer = nil })
-			s.refuse(w, seq, reqlog.Diverged, wire.InvalidRequest, "understudy: the request does not fit the script: "+div.text)
+			s.refuse(c, w, seq, meta, reqlog.Diverged, core.InvalidRequest, "understudy: the request does not fit the script: "+div.text)
 			return
 		}
 	}
+	if out.Kind == protocol.OutReply {
+		outLen := len(out.Reply.Text) + len(out.Reply.Thinking)
+		for _, cl := range out.Reply.Calls {
+			outLen += len(cl.Input) + len(cl.Raw)
+		}
+		meta.Usage.Output = core.EstimateTokens(outLen)
+	} else if out.Kind == protocol.OutStreamError {
+		meta.Usage.Output = core.EstimateTokens(len(out.Partial))
+	}
+	e := c.Encode(meta, out)
+	p := faults
+	p.Status, p.Headers, p.Body, p.Frames = e.Status, e.Header, e.Body, e.Frames
+	if p.Headers == nil {
+		p.Headers = http.Header{}
+	}
+	p.Headers.Set("Request-Id", requestID(seq))
 	s.log.Update(seq, func(e *Entry) { e.Status, e.Outcome = p.Status, reqlog.Pending })
-	if p.Events != nil {
+	if p.Frames != nil {
 		s.log.Update(seq, func(e *Entry) { e.Status = http.StatusOK })
 	}
 	hold := &reqlog.Hold{Gate: p.StallGate, Seconds: int(p.StallFor / time.Second)}
-	out := deliver.Send(r.Context(), w, p, deliver.Deps{Clock: s.clk, Gates: s.gates,
+	res := deliver.Send(r.Context(), w, p, deliver.Deps{Clock: s.clk, Gates: s.gates,
 		OnStall: func() {
 			s.log.Update(seq, func(e *Entry) {
 				h := *hold
@@ -144,7 +265,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		},
 		OnResume: func() { s.log.Update(seq, func(e *Entry) { e.Held = nil }) },
 	})
-	s.log.Update(seq, func(e *Entry) { e.Outcome = out })
+	s.log.Update(seq, func(e *Entry) { e.Outcome = res })
 }
 
 // cutText cuts t to at most n bytes, at a rune boundary.
@@ -161,7 +282,8 @@ func cutText(t string, n int) string {
 // MaxActualText is how much of each tool result an Actual line quotes.
 const MaxActualText = 300
 
-// actualOf describes the tool results a diverging request carried, one line each.
+// actualOf describes the tool results a diverging request carried, one line each,
+// as the harness profile read them.
 func actualOf(rs []script.Result, turn int) []string {
 	if len(rs) == 0 {
 		if turn == 0 {
@@ -178,8 +300,8 @@ func actualOf(rs []script.Result, turn int) []string {
 		if r.IsError {
 			how = "error"
 		}
-		if code, ok := script.ExitCode(r); ok && name == "Bash" {
-			how += fmt.Sprintf(", exit code %d", code)
+		if r.HasExit {
+			how += fmt.Sprintf(", exit code %d", r.Exit)
 		}
 		t := strings.TrimSpace(r.Text)
 		if len(t) > MaxActualText {
@@ -205,17 +327,15 @@ func logHistory(h [][]script.Result) [][]reqlog.Result {
 }
 
 type renderCtx struct {
-	session, step, model, cwd string
-	turn, attempt, seq        int
-	offered                   []string
-	stream                    bool
-	inputTokens               int
-	now                       time.Time
+	session, step, cwd string
+	turn, attempt      int
+	offered            []core.Tool
+	profile            *harness.Profile
+	now                time.Time
 }
 
 func (c renderCtx) id(prefix string, parts ...string) string {
-	h := sha256.Sum256([]byte(strings.Join(append([]string{c.session, strconv.Itoa(c.turn), c.step, strconv.Itoa(c.attempt)}, parts...), "\x00")))
-	return prefix + hex.EncodeToString(h[:])[:24]
+	return core.DeriveID(prefix, append([]string{c.session, strconv.Itoa(c.turn), c.step, strconv.Itoa(c.attempt)}, parts...)...)
 }
 
 // Reply kind names as the log shows them.
@@ -234,12 +354,11 @@ type renderDiv struct {
 	expected, actual []string
 }
 
-// render turns a script reply into a delivery plan and the answer the log keeps.
-// div.text is non-empty when the reply cannot be sent as written (a tool the
-// client does not offer, {{cwd}} without a working directory).
-func render(r script.Reply, c renderCtx) (p deliver.Plan, ans reqlog.Answer, div renderDiv) {
-	p.Headers = http.Header{"Request-Id": {requestID(c.seq)}}
-	meta := wire.Meta{ID: c.id("msg_"), Model: c.model}
+// render turns a script reply into a protocol-neutral outcome, its delivery
+// faults and the answer the log keeps. div.text is non-empty when the reply
+// cannot be sent as written (a tool the client does not offer, an action the
+// harness has no tool for, {{cwd}} without a working directory).
+func render(r script.Reply, c renderCtx) (out protocol.Out, p deliver.Plan, ans reqlog.Answer, div renderDiv) {
 	if s := r.Stall; s != nil {
 		p.StallFor, p.StallGate, p.StallMid = time.Duration(s.Seconds)*time.Second, s.Gate, s.At == script.MidStream
 		where := "before the response"
@@ -260,109 +379,148 @@ func render(r script.Reply, c renderCtx) (p deliver.Plan, ans reqlog.Answer, div
 		p.FirstDelay, p.Between = time.Duration(pc.FirstEventMS)*time.Millisecond, time.Duration(pc.BetweenEventsMS)*time.Millisecond
 		ans.Faults = append(ans.Faults, fmt.Sprintf("pace: first event after %d ms, %d ms between events", pc.FirstEventMS, pc.BetweenEventsMS))
 	}
-	var blocks []wire.OutBlock
-	stop := wire.EndTurn
-	thinking := func(t string) {
-		if t != "" {
-			blocks = append(blocks, wire.OutBlock{Kind: wire.OutThinking, Text: t, Signature: c.id("sig_", t)})
-		}
-	}
 	switch {
 	case r.Message != nil:
+		stop := core.EndTurn
 		ans.Kind, ans.Thinking, ans.Text, ans.Stop = KindMessage, r.Message.Thinking, r.Message.Text, string(script.EndTurn)
-		thinking(r.Message.Thinking)
-		blocks = append(blocks, wire.OutBlock{Kind: wire.OutText, Text: r.Message.Text})
 		if r.Message.Stop == script.MaxTokens {
-			stop, ans.Stop = wire.MaxTokens, string(script.MaxTokens)
+			stop, ans.Stop = core.MaxTokens, string(script.MaxTokens)
 		}
+		rep := core.Reply{Thinking: r.Message.Thinking, Text: r.Message.Text, Stop: stop}
+		if rep.Thinking != "" {
+			rep.ThinkingSignature = c.id("sig_", rep.Thinking)
+		}
+		return protocol.Out{Kind: protocol.OutReply, Reply: rep}, p, ans, renderDiv{}
 	case r.ToolUse != nil:
+		rep, d := renderCalls(r.ToolUse, c)
 		ans.Kind, ans.Thinking, ans.Text, ans.Stop = KindToolUse, r.ToolUse.Thinking, r.ToolUse.Text, "tool_use"
-		stop = wire.ToolUse
-		thinking(r.ToolUse.Thinking)
-		if r.ToolUse.Text != "" {
-			blocks = append(blocks, wire.OutBlock{Kind: wire.OutText, Text: r.ToolUse.Text})
-		}
-		offered := map[string]bool{}
-		for _, t := range c.offered {
-			offered[t] = true
-		}
-		var missing, needCWD []string
-		for i, call := range r.ToolUse.Calls {
-			if !offered[call.Tool] {
-				missing = append(missing, call.Tool)
+		for _, cl := range rep.Calls {
+			in := cl.Input
+			if cl.Kind == core.Freeform {
+				in, _ = json.Marshal(map[string]string{"input": cl.Raw})
 			}
-			input, usedCWD := substitute(call.Input, c.cwd)
-			if usedCWD && c.cwd == "" {
-				needCWD = append(needCWD, call.Tool)
-			}
-			b, _ := json.Marshal(input)
-			blocks = append(blocks, wire.OutBlock{Kind: wire.OutToolUse, ID: c.id("toolu_", strconv.Itoa(i)), Name: call.Tool, Input: b})
-			ans.Calls = append(ans.Calls, reqlog.Call{Tool: call.Tool, Input: b})
+			ans.Calls = append(ans.Calls, reqlog.Call{Tool: cl.Tool, Input: in})
 		}
-		if len(missing) > 0 {
-			names := append([]string(nil), c.offered...)
-			sort.Strings(names)
-			div.text = fmt.Sprintf("the script calls %s, which the client does not offer (it offers: %s)", strings.Join(missing, ", "), strings.Join(names, ", "))
-			div.expected = append(div.expected, "the client offers the tool(s) "+strings.Join(missing, ", "))
-			div.actual = append(div.actual, "the client offers: "+strings.Join(names, ", "))
-		}
-		if len(needCWD) > 0 {
-			if div.text != "" {
-				div.text += "; "
-			}
-			div.text += "the script uses {{cwd}} but the request does not say its working directory (no 'Primary working directory:' line)"
-			div.expected = append(div.expected, "a 'Primary working directory:' line for {{cwd}}")
-			div.actual = append(div.actual, "the request names no working directory")
-		}
+		return protocol.Out{Kind: protocol.OutReply, Reply: rep}, p, ans, d
 	case r.HTTPError != nil:
 		e := r.HTTPError
-		k, _ := wire.ParseErrorKind(e.Error)
 		ans.Kind, ans.Error, ans.Message, ans.Retry = KindHTTPError, e.Error, e.Message, string(e.Retry)
 		if ans.Retry == "" {
 			ans.Retry = string(script.RetryDefault)
 		}
-		p.Status, p.Body = k.Status(), wire.ErrorBody(k, e.Message, requestID(c.seq))
+		k, _ := core.ParseErrorKind(e.Error)
+		spec := protocol.ErrorSpec{Kind: k, Message: e.Message}
 		if e.RetryAfterSeconds != nil {
-			p.Headers.Set("Retry-After", strconv.Itoa(*e.RetryAfterSeconds))
+			spec.RetryAfter, spec.HasRetryAfter = time.Duration(*e.RetryAfterSeconds)*time.Second, true
 		}
 		switch e.Retry {
 		case script.RetryNever:
-			p.Headers.Set("X-Should-Retry", "false")
+			spec.Retry = core.RetryNever
 		case script.RetryAlways:
-			p.Headers.Set("X-Should-Retry", "true")
+			spec.Retry = core.RetryAlways
 		}
-		return p, ans, renderDiv{}
+		return protocol.Out{Kind: protocol.OutError, Error: spec}, p, ans, renderDiv{}
 	case r.Limit != nil:
 		ans.Kind, ans.Window, ans.ResetsInSeconds = KindLimit, string(r.Limit.Window), r.Limit.ResetsInSeconds
-		p.Status, p.Body = 429, wire.ErrorBody(wire.RateLimit, limitMessage(r.Limit.Window), requestID(c.seq))
-		for k, v := range LimitHeaders(r.Limit.Window, c.now, r.Limit.ResetsInSeconds) {
-			p.Headers.Set(k, v)
-		}
-		return p, ans, renderDiv{}
+		w, _ := core.ParseWindow(string(r.Limit.Window))
+		return protocol.Out{Kind: protocol.OutLimit, Limit: protocol.LimitSpec{Window: w, Now: c.now,
+			Resets: c.now.Add(time.Duration(r.Limit.ResetsInSeconds) * time.Second)}}, p, ans, renderDiv{}
 	case r.StreamError != nil:
 		e := r.StreamError
 		ans.Kind, ans.Error, ans.Message, ans.Text = KindStreamError, e.Error, e.Message, e.PartialText
-		k, _ := wire.ParseErrorKind(e.Error)
-		u := wire.Usage{Input: c.inputTokens, Output: wire.EstimateTokens(len(e.PartialText))}
-		if !c.stream {
-			// A non-streamed request cannot carry an in-stream error; send the same error as HTTP.
-			p.Status, p.Body = k.Status(), wire.ErrorBody(k, e.Message, requestID(c.seq))
-			return p, ans, renderDiv{}
+		k, _ := core.ParseErrorKind(e.Error)
+		return protocol.Out{Kind: protocol.OutStreamError, Error: protocol.ErrorSpec{Kind: k, Message: e.Message}, Partial: e.PartialText}, p, ans, renderDiv{}
+	}
+	panic("server: a compiled reply has no kind")
+}
+
+func renderCalls(t *script.ToolUse, c renderCtx) (core.Reply, renderDiv) {
+	rep := core.Reply{Thinking: t.Thinking, Text: t.Text, Stop: core.ToolUse}
+	if rep.Thinking != "" {
+		rep.ThinkingSignature = c.id("sig_", rep.Thinking)
+	}
+	offered := map[string]core.Tool{}
+	for _, o := range c.offered {
+		offered[o.Name] = o
+	}
+	var missing, needCWD, noTool []string
+	for i, call := range t.Calls {
+		var cl core.Call
+		usedCWD := false
+		if a, args, ok := actionOf(call); ok {
+			sub := func(s string) string {
+				if strings.Contains(s, "{{cwd}}") {
+					usedCWD = true
+				}
+				return strings.ReplaceAll(s, "{{cwd}}", c.cwd)
+			}
+			args.Command, args.Path, args.Content, args.Old, args.New = sub(args.Command), sub(args.Path), sub(args.Content), sub(args.Old), sub(args.New)
+			var err error
+			cl, err = c.profile.Call(a, args)
+			if err != nil {
+				noTool = append(noTool, err.Error())
+				continue
+			}
+		} else {
+			input, used := substitute(call.Input, c.cwd)
+			usedCWD = used
+			cl = core.Call{Tool: call.Tool}
+			if o, ok := offered[call.Tool]; ok && o.Kind == core.Freeform {
+				// A native call of a freeform tool writes its raw text as input: {input: ...}.
+				m, _ := input.(map[string]any)
+				s, _ := m["input"].(string)
+				cl.Kind, cl.Raw = core.Freeform, s
+			} else {
+				cl.Input, _ = json.Marshal(input)
+			}
 		}
-		p.Events = wire.ErrorEvents(meta, u, e.PartialText, k, e.Message)
-		return p, ans, renderDiv{}
+		cl.ID = c.id("", strconv.Itoa(i))
+		if _, ok := offered[cl.Tool]; !ok {
+			missing = append(missing, cl.Tool)
+		}
+		if usedCWD && c.cwd == "" {
+			needCWD = append(needCWD, cl.Tool)
+		}
+		rep.Calls = append(rep.Calls, cl)
 	}
-	outLen := 0
-	for _, b := range blocks {
-		outLen += len(b.Text) + len(b.Input)
+	var div renderDiv
+	var texts []string
+	for _, n := range noTool {
+		texts = append(texts, n)
+		div.expected = append(div.expected, "a harness with a tool for the action ("+n+")")
+		div.actual = append(div.actual, fmt.Sprintf("the request was read as %s", c.profile.ID))
 	}
-	u := wire.Usage{Input: c.inputTokens, Output: wire.EstimateTokens(outLen)}
-	if c.stream {
-		p.Events = wire.StreamEvents(meta, blocks, stop, u)
-	} else {
-		p.Status, p.Body = http.StatusOK, wire.MessageJSON(meta, blocks, stop, u)
+	names := make([]string, 0, len(c.offered))
+	for _, o := range c.offered {
+		names = append(names, o.Name)
 	}
-	return p, ans, div
+	sort.Strings(names)
+	if len(missing) > 0 {
+		texts = append(texts, fmt.Sprintf("the script calls %s, which the client does not offer (it offers: %s)", strings.Join(missing, ", "), strings.Join(names, ", ")))
+		div.expected = append(div.expected, "the client offers the tool(s) "+strings.Join(missing, ", "))
+		div.actual = append(div.actual, "the client offers: "+strings.Join(names, ", "))
+	}
+	if len(needCWD) > 0 {
+		texts = append(texts, fmt.Sprintf("the script uses {{cwd}} but the request does not say its working directory (the %s profile found none)", c.profile.ID))
+		div.expected = append(div.expected, "a working directory in the prompt for {{cwd}}")
+		div.actual = append(div.actual, "the request names no working directory")
+	}
+	div.text = strings.Join(texts, "; ")
+	return rep, div
+}
+
+func actionOf(call script.Call) (core.Action, core.ActionArgs, bool) {
+	switch {
+	case call.Shell != nil:
+		return core.Shell, core.ActionArgs{Command: call.Shell.Command}, true
+	case call.Read != nil:
+		return core.ReadFile, core.ActionArgs{Path: call.Read.Path}, true
+	case call.Write != nil:
+		return core.WriteFile, core.ActionArgs{Path: call.Write.Path, Content: call.Write.Content}, true
+	case call.Edit != nil:
+		return core.EditFile, core.ActionArgs{Path: call.Edit.Path, Old: call.Edit.Old, New: call.Edit.New}, true
+	}
+	return core.NoAction, core.ActionArgs{}, false
 }
 
 // substitute replaces {{cwd}} in every string of v, and says whether it was used.
@@ -393,38 +551,4 @@ func substitute(v any, cwd string) (any, bool) {
 		return out, used
 	}
 	return v, false
-}
-
-func limitMessage(w script.Window) string {
-	switch w {
-	case script.FiveHour:
-		return "You have reached your 5-hour usage limit."
-	case script.SevenDayOpus:
-		return "You have reached your weekly Opus usage limit."
-	case script.SevenDaySonnet:
-		return "You have reached your weekly Sonnet usage limit."
-	}
-	return "You have reached your weekly usage limit."
-}
-
-// LimitHeaders are the headers of a usage-limit 429 for window, resetting
-// resetsIn seconds after now. Measured against Claude Code 2.1.325: with these
-// (and a gateway token, see the README) it prints "You've hit your weekly limit".
-func LimitHeaders(w script.Window, now time.Time, resetsIn int) map[string]string {
-	reset := strconv.FormatInt(now.Unix()+int64(resetsIn), 10)
-	h := map[string]string{
-		"X-Should-Retry":                     "false",
-		"Retry-After":                        strconv.Itoa(resetsIn),
-		"Anthropic-Ratelimit-Unified-Status": "rejected",
-		"Anthropic-Ratelimit-Unified-Representative-Claim": string(w),
-		"Anthropic-Ratelimit-Unified-Reset":                reset,
-	}
-	win := "7d"
-	if w == script.FiveHour {
-		win = "5h"
-	}
-	h["Anthropic-Ratelimit-Unified-"+win+"-Status"] = "rejected"
-	h["Anthropic-Ratelimit-Unified-"+win+"-Reset"] = reset
-	h["Anthropic-Ratelimit-Unified-"+win+"-Utilization"] = "1.0"
-	return h
 }

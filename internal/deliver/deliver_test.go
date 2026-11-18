@@ -16,11 +16,16 @@ import (
 	"github.com/seungduk/understudy/internal/clock"
 	"github.com/seungduk/understudy/internal/gate"
 	"github.com/seungduk/understudy/internal/reqlog"
-	"github.com/seungduk/understudy/internal/wire"
 )
 
-func events() []wire.Event {
-	return wire.StreamEvents(wire.Meta{ID: "msg_1", Model: "m"}, []wire.OutBlock{{Kind: wire.OutText, Text: "hello world"}}, wire.EndTurn, wire.Usage{Input: 1, Output: 2})
+// events is a short stream in the shape of an Anthropic one: deliver sends
+// frames as given and never looks inside them.
+func events() [][]byte {
+	var out [][]byte
+	for _, n := range []string{"message_start", "content_block_start", "ping", "text_delta", "content_block_stop", "message_delta", "message_stop"} {
+		out = append(out, []byte("event: "+n+"\ndata: {\"type\":\""+n+"\"}\n\n"))
+	}
+	return out
 }
 
 type rig struct {
@@ -56,7 +61,7 @@ func (r *rig) raw(t *testing.T) (string, error) {
 }
 
 func TestStreamServed(t *testing.T) {
-	r := newRig(t, Plan{Events: events(), Headers: http.Header{"Request-Id": {"req_1"}}})
+	r := newRig(t, Plan{Frames: events(), Headers: http.Header{"Request-Id": {"req_1"}}})
 	resp, err := http.Get(r.srv.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +73,7 @@ func TestStreamServed(t *testing.T) {
 	}
 	var want strings.Builder
 	for _, e := range events() {
-		want.Write(e.Encode())
+		want.Write(e)
 	}
 	if string(b) != want.String() {
 		t.Fatalf("body %q", b)
@@ -79,7 +84,7 @@ func TestStreamServed(t *testing.T) {
 }
 
 func TestBody(t *testing.T) {
-	r := newRig(t, Plan{Status: 529, Body: wire.ErrorBody(wire.Overloaded, "", "req_1"), Headers: http.Header{"X-Should-Retry": {"true"}}})
+	r := newRig(t, Plan{Status: 529, Body: []byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`), Headers: http.Header{"X-Should-Retry": {"true"}}})
 	resp, err := http.Get(r.srv.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -102,11 +107,11 @@ func TestCuts(t *testing.T) {
 		saw   string // text the client must have got before the cut ("" = nothing)
 		not   string
 	}{
-		{"close before response", Plan{Events: events(), Cut: true}, false, "", "HTTP/1.1"},
-		{"reset before response", Plan{Events: events(), Cut: true, CutReset: true}, true, "", "HTTP/1.1"},
-		{"close mid stream", Plan{Events: events(), Cut: true, CutAfter: 3}, false, "event: ping", "text_delta"},
-		{"reset mid stream", Plan{Events: events(), Cut: true, CutAfter: 3, CutReset: true}, true, "", "message_stop"},
-		{"cut past the end keeps the last event back", Plan{Events: events(), Cut: true, CutAfter: 999}, false, "message_delta", "message_stop"},
+		{"close before response", Plan{Frames: events(), Cut: true}, false, "", "HTTP/1.1"},
+		{"reset before response", Plan{Frames: events(), Cut: true, CutReset: true}, true, "", "HTTP/1.1"},
+		{"close mid stream", Plan{Frames: events(), Cut: true, CutAfter: 3}, false, "event: ping", "text_delta"},
+		{"reset mid stream", Plan{Frames: events(), Cut: true, CutAfter: 3, CutReset: true}, true, "", "message_stop"},
+		{"cut past the end keeps the last event back", Plan{Frames: events(), Cut: true, CutAfter: 999}, false, "message_delta", "message_stop"},
 		{"close mid body", Plan{Status: 200, Body: []byte(`{"aaaaaaaaaa":"bbbbbbbbbb"}`), Cut: true, CutAfter: 1}, false, `{"aaaaaaaaaa`, "bbbbbbbbbb"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -138,7 +143,7 @@ func TestCuts(t *testing.T) {
 
 func TestStalls(t *testing.T) {
 	t.Run("gate before response", func(t *testing.T) {
-		r := newRig(t, Plan{Events: events(), StallGate: "g"})
+		r := newRig(t, Plan{Frames: events(), StallGate: "g"})
 		done := make(chan string)
 		go func() { s, _ := r.raw(t); done <- s }()
 		<-r.stalled
@@ -160,7 +165,7 @@ func TestStalls(t *testing.T) {
 		<-r.outcome
 	})
 	t.Run("timed mid stream on the virtual clock", func(t *testing.T) {
-		r := newRig(t, Plan{Events: events(), StallFor: time.Hour, StallMid: true})
+		r := newRig(t, Plan{Frames: events(), StallFor: time.Hour, StallMid: true})
 		done := make(chan string)
 		go func() { s, _ := r.raw(t); done <- s }()
 		<-r.stalled
@@ -175,7 +180,7 @@ func TestStalls(t *testing.T) {
 		<-r.outcome
 	})
 	t.Run("pace", func(t *testing.T) {
-		r := newRig(t, Plan{Events: events(), FirstDelay: time.Second, Between: time.Second})
+		r := newRig(t, Plan{Frames: events(), FirstDelay: time.Second, Between: time.Second})
 		done := make(chan string)
 		go func() { s, _ := r.raw(t); done <- s }()
 		for i := 0; i < len(events()); i++ {
@@ -193,8 +198,8 @@ func TestStalls(t *testing.T) {
 		<-r.outcome
 	})
 	t.Run("client gone while stalled", func(t *testing.T) {
-		for _, p := range []Plan{{Events: events(), StallGate: "g2"}, {Events: events(), StallGate: "g3", StallMid: true},
-			{Events: events(), FirstDelay: time.Hour}, {Events: events(), Between: time.Hour}} {
+		for _, p := range []Plan{{Frames: events(), StallGate: "g2"}, {Frames: events(), StallGate: "g3", StallMid: true},
+			{Frames: events(), FirstDelay: time.Hour}, {Frames: events(), Between: time.Hour}} {
 			r := newRig(t, p)
 			ctx, cancel := context.WithCancel(context.Background())
 			req, _ := http.NewRequestWithContext(ctx, "GET", r.srv.URL, nil)

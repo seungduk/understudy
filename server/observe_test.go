@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"github.com/seungduk/understudy/core"
 	"net/http"
 	"strings"
 	"testing"
@@ -238,7 +239,8 @@ func TestValidateAndScriptInfo(t *testing.T) {
 
 func TestActualOfAndCutText(t *testing.T) {
 	long := strings.Repeat("é", 200) // 400 bytes
-	got := actualOf([]script.Result{{Tool: "Bash", IsError: true, Text: "Exit code 1\nFAIL"}, {Tool: "Bash", Text: " ok "}, {Text: long}}, 2)
+	got := actualOf([]script.Result{{Tool: "Bash", Action: core.Shell, IsError: true, Text: "Exit code 1\nFAIL", Exit: 1, HasExit: true},
+		{Tool: "Bash", Action: core.Shell, Text: " ok ", HasExit: true}, {Text: long}}, 2)
 	want := []string{
 		`result 0 (Bash): error, exit code 1: "Exit code 1\nFAIL"`,
 		`result 1 (Bash): ok, exit code 0: "ok"`,
@@ -260,12 +262,12 @@ func TestActualOfAndCutText(t *testing.T) {
 
 func TestFaultWords(t *testing.T) {
 	r := script.Reply{Message: &script.Message{Text: "x"}, Stall: &script.Stall{Gate: "g", At: script.MidStream}, Cut: &script.Cut{AfterEvents: 3, How: script.Reset}}
-	_, a, _ := render(r, renderCtx{stream: true})
+	_, _, a, _ := render(r, renderCtx{})
 	if strings.Join(a.Faults, "|") != "stall mid-stream until gate g is released|cut (reset) after 3 event(s)" {
 		t.Fatalf("%q", a.Faults)
 	}
 	r = script.Reply{Message: &script.Message{Text: "x"}, Stall: &script.Stall{Seconds: 5}}
-	if _, a, _ = render(r, renderCtx{stream: true}); strings.Join(a.Faults, "|") != "stall before the response for 5 s" {
+	if _, _, a, _ = render(r, renderCtx{}); strings.Join(a.Faults, "|") != "stall before the response for 5 s" {
 		t.Fatalf("%q", a.Faults)
 	}
 }

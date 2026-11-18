@@ -40,7 +40,7 @@ func cmdValidate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "understudy validate: give the script file, such as: understudy validate fix.yaml")
 		return 2
 	}
-	sc, err := script.Load(file)
+	sc, err := loadScript(file)
 	var ps script.Problems
 	if err != nil && !errors.As(err, &ps) {
 		ps = script.Problems{{Rule: script.RuleSyntax, Message: err.Error(), Fix: "give a script file"}}
@@ -241,4 +241,13 @@ func cmdEnv(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "export %s='%s'\n", k, strings.ReplaceAll(v, "'", `'\''`))
 	}
 	return 0
+}
+
+// loadScript reads a script and checks it against this server (harness names).
+func loadScript(path string) (*script.Script, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, script.Problems{{Rule: script.RuleSyntax, Message: fmt.Sprintf("cannot read %s: %v", path, err), Fix: "give the path of a readable script file"}}
+	}
+	return server.Parse(data)
 }

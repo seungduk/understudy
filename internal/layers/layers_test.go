@@ -25,27 +25,44 @@ func rel(imp string) (string, bool) {
 // allowed lists, per package, the module packages it may import (tests excluded).
 // Lower layers first; nothing may import a package listed below it.
 var allowed = map[string][]string{
-	".":                {}, // the module root: the embedded documents
-	"internal/notify":  {},
-	"ui":               {},
-	"internal/wire":    {},
-	"internal/clock":   {},
-	"internal/gate":    {},
-	"internal/reqlog":  {},
-	"clienv":           {},
-	"script":           {"internal/wire"},
-	"internal/conv":    {"internal/wire", "script"},
-	"internal/deliver": {"internal/clock", "internal/gate", "internal/reqlog", "internal/wire"},
-	"server":           {"internal/clock", "internal/conv", "internal/deliver", "internal/gate", "internal/notify", "internal/reqlog", "internal/wire", "script"},
-	"record":           {"internal/conv", "internal/wire", "script"},
-	"explain":          {"script", "server"},
-	"control":          {"script", "server"},
-	"understudytest":   {"clienv", "script", "server"},
-	"mcpserver":        {".", "clienv", "control", "explain", "record", "script", "server"},
-	"cmd/understudy":   {"clienv", "control", "explain", "mcpserver", "record", "script", "server", "ui"},
-	"internal/layers":  {},
-	"e2e":              {},
-	"examples/go":      {},
+	// The module root (the embedded documents) and leaf utilities.
+	".":                     {},
+	"internal/notify":       {},
+	"ui":                    {},
+	"internal/clock":        {},
+	"internal/gate":         {},
+	"internal/reqlog":       {},
+	"internal/protocol/sse": {},
+	// The neutral model and the interfaces: no wire protocol, no harness.
+	"core":     {},
+	"protocol": {"core"},
+	// The script engine knows only core.
+	"script": {"core"},
+	// Harness profiles are data over core and the protocol IDs.
+	"harness": {"core", "protocol"},
+	// One package per wire protocol, each only over core and the interface.
+	"internal/protocol/anthropic":  {"core", "internal/protocol/sse", "protocol"},
+	"internal/protocol/openai":     {"core"},
+	"internal/protocol/openaichat": {"core", "internal/protocol/openai", "internal/protocol/sse", "protocol"},
+	"internal/protocol/responses":  {"core", "internal/protocol/openai", "internal/protocol/sse", "protocol"},
+	"internal/protocol/gemini":     {"core", "internal/protocol/sse", "protocol"},
+	"internal/protocol/codectest":  {"core", "internal/protocol/sse", "protocol"},
+	"internal/protocol/registry":   {"internal/protocol/anthropic", "internal/protocol/gemini", "internal/protocol/openaichat", "internal/protocol/responses", "protocol"},
+	// Reading a request for the engine: neutral.
+	"internal/conv":    {"core", "harness", "script"},
+	"internal/deliver": {"internal/clock", "internal/gate", "internal/reqlog"},
+	// The top: protocol-agnostic server, recorder, control and tools.
+	"server":          {"core", "harness", "internal/clock", "internal/conv", "internal/deliver", "internal/gate", "internal/notify", "internal/protocol/registry", "internal/reqlog", "protocol", "script"},
+	"record":          {"core", "harness", "internal/conv", "internal/protocol/anthropic", "internal/protocol/registry", "protocol", "script"},
+	"explain":         {"script", "server"},
+	"control":         {"script", "server"},
+	"clienv":          {},
+	"understudytest":  {"clienv", "harness", "protocol", "script", "server"},
+	"mcpserver":       {".", "clienv", "control", "explain", "harness", "protocol", "record", "script", "server"},
+	"cmd/understudy":  {"clienv", "control", "core", "explain", "harness", "mcpserver", "protocol", "record", "script", "server", "ui"},
+	"internal/layers": {},
+	"e2e":             {},
+	"examples/go":     {},
 }
 
 func TestLayers(t *testing.T) {

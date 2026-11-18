@@ -1,4 +1,5 @@
-// Command understudy runs the fake Anthropic Messages API and its tools.
+// Command understudy runs the fake model API (Anthropic Messages, OpenAI Chat
+// Completions and Responses, Gemini) and its tools.
 package main
 
 import (
@@ -15,7 +16,8 @@ func main() {
 }
 
 func usage() string {
-	return `understudy: a scriptable fake of the Anthropic Messages API for testing agents.
+	return `understudy: a scriptable fake of the model APIs agent harnesses use (Anthropic Messages,
+OpenAI Chat Completions and Responses, Gemini), for testing agents.
 
 Usage:
   understudy serve [--addr 127.0.0.1:8765] [--script FILE] [--clock real|virtual] [--ui on|off] [--mcp on|off]
@@ -24,7 +26,9 @@ Usage:
   understudy explain (--log FILE | --url URL) [--script FILE] [--session KEY] [--json]
   understudy record --transcript FILE [--session KEY] [--run ID] [--task ID] [--seat NAME] [--cwd DIR] [--divergence strict|lenient] [--out FILE]
   understudy record-proxy --upstream URL [--addr ADDR] --out FILE
-  understudy env [--url URL] [--session KEY] [--auth api-key|gateway]
+  understudy env [--url URL] [--session KEY] [--auth api-key|gateway]       (Claude Code)
+  understudy harnesses [--json]
+  understudy setup --harness NAME --home DIR [--url URL] [--session KEY] [--dir DIR] [--protocol P] [--prompt TEXT] [--json]
   understudy schema
   understudy version
 
@@ -55,6 +59,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdRecordProxy(args[1:], stdout, stderr)
 	case "env":
 		return cmdEnv(args[1:], stdout, stderr)
+	case "harnesses":
+		return cmdHarnesses(args[1:], stdout, stderr)
+	case "setup":
+		return cmdSetup(args[1:], stdout, stderr)
 	case "schema":
 		_, _ = stdout.Write(script.SchemaJSON)
 		return 0

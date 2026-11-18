@@ -3,6 +3,8 @@ package script
 import (
 	"strings"
 	"testing"
+
+	"github.com/seungduk/understudy/core"
 )
 
 const branching = `schema: understudy/v1
@@ -36,8 +38,8 @@ func plan(t *testing.T, src, key string) (*SessionPlan, *Script) {
 
 var (
 	editOK = []Result{{Tool: "Edit", Text: "The file has been updated."}}
-	pass   = []Result{{Tool: "Bash", Text: "ok  pkg 0.1s"}}
-	fail   = []Result{{Tool: "Bash", IsError: true, Text: "Exit code 1\n--- FAIL: TestX"}}
+	pass   = []Result{{Tool: "Bash", Text: "ok  pkg 0.1s", HasExit: true}}
+	fail   = []Result{{Tool: "Bash", IsError: true, Text: "Exit code 1\n--- FAIL: TestX", Exit: 1, HasExit: true}}
 )
 
 func TestChooseLinearAndBranches(t *testing.T) {
@@ -148,7 +150,7 @@ sessions:
 func TestMatcherFields(t *testing.T) {
 	zero, one := 0, 1
 	mk := func(m Matcher) *matcher {
-		c := &checker{ls: lines{}}
+		c := &checker{ls: lines{}, v2: true}
 		cm := c.matcher(m, "m")
 		if len(c.ps) > 0 {
 			t.Fatal(c.ps)
@@ -156,6 +158,10 @@ func TestMatcherFields(t *testing.T) {
 		return cm
 	}
 	r := func(isErr bool, text string) []Result { return []Result{{Tool: "Bash", IsError: isErr, Text: text}} }
+	// rx is a result that shows exit code n (as the harness profile read it).
+	rx := func(isErr bool, n int) []Result {
+		return []Result{{Tool: "Bash", IsError: isErr, Exit: n, HasExit: true}}
+	}
 	cases := []struct {
 		m    Matcher
 		in   []Result
@@ -165,11 +171,13 @@ func TestMatcherFields(t *testing.T) {
 		{Matcher{Result: OK}, r(true, ""), false},
 		{Matcher{Result: Error}, r(true, ""), true},
 		{Matcher{Result: Error}, r(false, ""), false},
-		{Matcher{ExitCode: &zero}, r(false, "x"), true},
-		{Matcher{ExitCode: &one}, r(true, "Exit code 1\nx"), true},
-		{Matcher{ExitCode: &one}, r(true, "Error: Exit code 1"), true},
+		{Matcher{ExitCode: &zero}, rx(false, 0), true},
+		{Matcher{ExitCode: &one}, rx(true, 1), true},
 		{Matcher{ExitCode: &one}, r(true, "boom"), false},
-		{Matcher{ExitCode: &zero}, r(true, "Exit code 3"), false},
+		{Matcher{ExitCode: &zero}, rx(true, 3), false},
+		{Matcher{Action: "shell"}, []Result{{Tool: "exec_command", Action: core.Shell}}, true},
+		{Matcher{Action: "shell"}, []Result{{Tool: "Read", Action: core.ReadFile}}, false},
+		{Matcher{Action: "edit", Result: OK}, []Result{{Tool: "apply_patch", Action: core.EditFile}}, true},
 		{Matcher{Contains: "ok"}, r(false, "is ok"), true},
 		{Matcher{Contains: "ok"}, r(false, "no"), false},
 		{Matcher{Regex: "^a+$"}, r(false, "aaa"), true},
@@ -188,8 +196,11 @@ func TestMatcherFields(t *testing.T) {
 	if d := mk(Matcher{Tool: "Bash", Result: OK, ExitCode: &zero, Contains: "a", Regex: "b"}).describe(); d != `{tool: Bash, result: ok, exit_code: 0, contains: "a", regex: "b"}` {
 		t.Error(d)
 	}
-	if n, ok := ExitCode(Result{IsError: true, Text: "Exit code 99999999999999999999999"}); ok {
-		t.Error("overflow exit code", n)
+	if d := mk(Matcher{Action: "read"}).describe(); d != `{action: read}` {
+		t.Error(d)
+	}
+	if ok, why := mk(Matcher{Action: "read"}).match([]Result{{Tool: "Bash", Action: core.Shell}}); ok || why != "no result answers a read action" {
+		t.Error(ok, why)
 	}
 }
 

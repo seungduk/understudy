@@ -3,6 +3,8 @@ package record
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/seungduk/understudy/internal/protocol/registry"
+	"github.com/seungduk/understudy/protocol"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -142,16 +144,26 @@ func TestProxyEdges(t *testing.T) {
 		t.Fatal(err, r.StatusCode)
 	}
 	// Replies the recorder cannot read are skipped.
-	p.keep(http.Header{}, []byte("bad"), 200, "", nil)
-	p.keep(http.Header{}, []byte(reqBody(true)), 299, "", nil)
-	p.keep(http.Header{}, []byte(reqBody(true)), 200, "application/json", []byte("bad"))
-	p.keep(http.Header{"X-Understudy-Session": {"bad key"}}, []byte(reqBody(true)), 200, "application/json", []byte(`{"content":[]}`))
+	anth := registry.For(protocol.Anthropic)
+	keep := func(h http.Header, body []byte, status int, ctype string, resp []byte) {
+		r := httptest.NewRequest("POST", "/v1/messages", nil)
+		r.Header = h
+		rh := http.Header{}
+		if ctype != "" {
+			rh.Set("Content-Type", ctype)
+		}
+		p.keep(anth, r, body, status, rh, resp)
+	}
+	keep(http.Header{}, []byte("bad"), 200, "", nil)
+	keep(http.Header{}, []byte(reqBody(true)), 299, "", nil)
+	keep(http.Header{}, []byte(reqBody(true)), 200, "application/json", []byte("bad"))
+	keep(http.Header{"X-Understudy-Session": {"bad key"}}, []byte(reqBody(true)), 200, "application/json", []byte(`{"content":[]}`))
 	if len(p.Sessions()) != 0 {
 		t.Fatal(p.Sessions())
 	}
-	p.keep(http.Header{}, []byte(reqBody(true)), 200, "text/event-stream", []byte("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"name\":\"X\"}}\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"partial_json\":\"{bad\"}}\ndata: nope\ndata: {\"type\":\"content_block_delta\",\"index\":5}\n"))
-	p.keep(http.Header{}, []byte(reqBody(true)), 200, "text/event-stream", []byte("data: {\"type\":\"error\",\"error\":{\"type\":\"weird\"}}\n"))
-	p.keep(http.Header{}, []byte(reqBody(true)), 200, "application/json", []byte(`{"content":[{"type":"thinking","thinking":"t"}]}`))
+	keep(http.Header{}, []byte(reqBody(true)), 200, "text/event-stream", []byte("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"name\":\"X\"}}\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"partial_json\":\"{bad\"}}\ndata: nope\ndata: {\"type\":\"content_block_delta\",\"index\":5}\n"))
+	keep(http.Header{}, []byte(reqBody(true)), 200, "text/event-stream", []byte("data: {\"type\":\"error\",\"error\":{\"type\":\"weird\"}}\n"))
+	keep(http.Header{}, []byte(reqBody(true)), 200, "application/json", []byte(`{"content":[{"type":"thinking","thinking":"t"}]}`))
 	f := p.File(Meta{})
 	st := f.Sessions["default"].Steps
 	if len(st) != 1 || st[0].Attempts[0].StreamError.Error != "api_error" || st[0].Attempts[1].Message.Text != "(no text)" {
