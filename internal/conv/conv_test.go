@@ -79,3 +79,20 @@ func TestHistoryAndCWD(t *testing.T) {
 		t.Errorf("none %+v", v)
 	}
 }
+
+func TestPrompt(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{`{"model":"m","messages":[{"role":"user","content":"fix the bug"}]}`, "fix the bug"},
+		{`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>x</system-reminder>"},{"type":"text","text":"  "},{"type":"text","text":"task"}]}]}`, "<system-reminder>x</system-reminder>\n\ntask"},
+		{`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"out"}]}]}`, ""},
+		{`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"out"},{"type":"text","text":"also this"}]}]}`, "also this"},
+		{`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":"prefill"}]}`, ""},
+		{`{"model":"m","messages":[{"role":"user","content":"task"},{"role":"system","content":"env"}]}`, "task"},
+		{`{"model":"m","messages":[{"role":"system","content":"env"}]}`, ""},
+	}
+	for _, c := range cases {
+		if got := Read(http.Header{}, req(t, c.body)).Prompt; got != c.want {
+			t.Errorf("%s: prompt %q, want %q", c.body, got, c.want)
+		}
+	}
+}

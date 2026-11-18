@@ -29,12 +29,13 @@ type rig struct {
 	clk     *clock.Virtual
 	gates   *gate.Set
 	stalled chan struct{}
+	resumed chan struct{}
 }
 
 func newRig(t *testing.T, p Plan) *rig {
-	r := &rig{outcome: make(chan reqlog.Outcome, 1), clk: clock.NewVirtual(time.Unix(0, 0)), gates: gate.New(), stalled: make(chan struct{}, 1)}
+	r := &rig{outcome: make(chan reqlog.Outcome, 1), clk: clock.NewVirtual(time.Unix(0, 0)), gates: gate.New(), stalled: make(chan struct{}, 1), resumed: make(chan struct{}, 1)}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		r.outcome <- Send(req.Context(), w, p, Deps{Clock: r.clk, Gates: r.gates, OnStall: func() { r.stalled <- struct{}{} }})
+		r.outcome <- Send(req.Context(), w, p, Deps{Clock: r.clk, Gates: r.gates, OnStall: func() { r.stalled <- struct{}{} }, OnResume: func() { r.resumed <- struct{}{} }})
 	}))
 	t.Cleanup(r.srv.Close)
 	return r
@@ -146,10 +147,16 @@ func TestStalls(t *testing.T) {
 			t.Fatal("answered before release")
 		case <-time.After(30 * time.Millisecond):
 		}
+		select {
+		case <-r.resumed:
+			t.Fatal("resumed before release")
+		default:
+		}
 		r.gates.Release("g")
 		if s := <-done; !strings.Contains(s, "message_stop") {
 			t.Fatal(s)
 		}
+		<-r.resumed
 		<-r.outcome
 	})
 	t.Run("timed mid stream on the virtual clock", func(t *testing.T) {
@@ -204,6 +211,10 @@ func TestStalls(t *testing.T) {
 			cancel()
 			if o := <-r.outcome; o != reqlog.ClientGone {
 				t.Fatalf("%+v: %s", p, o)
+			}
+			if p.StallGate != "" {
+				<-r.stalled
+				<-r.resumed // a stall the client left still ends
 			}
 		}
 	})

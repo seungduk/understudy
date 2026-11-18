@@ -192,3 +192,55 @@ func TestMatcherFields(t *testing.T) {
 		t.Error("overflow exit code", n)
 	}
 }
+
+func TestChooseExpected(t *testing.T) {
+	p, _ := plan(t, branching, "s")
+	if ch := p.Choose([][]Result{nil, editOK, pass}, Strict); ch.Expected != nil {
+		t.Fatalf("a fitting request has no expected: %q", ch.Expected)
+	}
+	odd := []Result{{Tool: "Bash", IsError: true, Text: "Exit code 2\nno go files"}}
+	ch := p.Choose([][]Result{nil, editOK, odd}, Strict)
+	want := []string{`step "judge" case 0 when {tool: Bash, exit_code: 0}`, `step "judge" case 1 when {tool: Bash, contains: "FAIL"}`}
+	if strings.Join(ch.Expected, "|") != strings.Join(want, "|") {
+		t.Fatalf("no case: %q", ch.Expected)
+	}
+	ex, _ := plan(t, `schema: understudy/v1
+sessions:
+  s:
+    steps:
+      - {name: a, reply: {tool_use: {calls: [{tool: Read, input: {}}]}}}
+      - {name: b, expect: {tool: Read, result: ok}, reply: {message: {text: done}}}
+`, "s")
+	ch = ex.Choose([][]Result{nil, {{Tool: "Read", IsError: true, Text: "no such file"}}}, Strict)
+	if len(ch.Expected) != 1 || ch.Expected[0] != `step "b" expect {tool: Read, result: ok}` {
+		t.Fatalf("expect: %q", ch.Expected)
+	}
+	ch = ex.Choose([][]Result{nil, {{Tool: "Read", Text: "ok"}}, nil}, Strict)
+	if len(ch.Expected) != 1 || ch.Expected[0] != `no turn after step "b": the session has 2 step(s)` {
+		t.Fatalf("ended: %q", ch.Expected)
+	}
+	ch = ex.Choose([][]Result{nil, {{Tool: "Read", IsError: true, Text: "x"}}}, Lenient)
+	if len(ch.Expected) != 1 || ch.Attempts == nil {
+		t.Fatalf("lenient keeps what was expected and answers: %+v", ch)
+	}
+}
+
+func TestOutlineAndSource(t *testing.T) {
+	src := "schema: understudy/v1\n# a comment\nsessions:\n  b:\n    steps:\n      - {name: one, reply: {message: {text: x}}}\n      - name: two\n        reply: {message: {text: y}}\n  a:\n    steps:\n      - {name: only, reply: {message: {text: z}}}\n"
+	s, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(s.Source()) != src {
+		t.Fatalf("source %q", s.Source())
+	}
+	o := s.Outline()
+	if len(o) != 2 || o[0].Key != "a" || o[0].Line != 10 || o[0].Steps[0] != (StepOutline{Name: "only", Line: 11}) ||
+		o[1].Key != "b" || o[1].Line != 5 || len(o[1].Steps) != 2 || o[1].Steps[0].Line != 6 || o[1].Steps[1] != (StepOutline{Name: "two", Line: 7}) {
+		t.Fatalf("%+v", o)
+	}
+	c := MustCompile(s.File())
+	if c.Source() != nil || c.Outline()[1].Steps[1] != (StepOutline{Name: "two"}) {
+		t.Fatalf("compiled from a File: %q %+v", c.Source(), c.Outline())
+	}
+}

@@ -5,8 +5,9 @@ Thanks for helping. understudy stays small and exact; changes are welcome when t
 ## Rules of the code
 
 - **Layers.** Packages depend only downwards: `internal/wire`, `internal/clock`, `internal/gate`,
-  `internal/reqlog`, `clienv` at the bottom; then `script`, `internal/conv`, `internal/deliver`;
-  then `server`, `record`; then `explain`, `understudytest`; `cmd/understudy` on top.
+  `internal/reqlog`, `internal/notify`, `clienv`, `ui` and the module root (the embedded
+  documents) at the bottom; then `script`, `internal/conv`, `internal/deliver`; then `server`,
+  `record`; then `explain`, `control`, `understudytest`; then `mcpserver`; `cmd/understudy` on top.
   `internal/layers` checks this in `go test ./...`; a new package needs a line in its table.
 - **Small interfaces.** Closed enums instead of strings, named enums instead of booleans, bounded
   numbers, validated types. A new script field needs: the Go type, the loader's field table
@@ -17,6 +18,13 @@ Thanks for helping. understudy stays small and exact; changes are welcome when t
   must pass.
 - **Wire facts are measured.** Anything about what Claude Code sends or does is measured against
   a named CLI version and recorded in the README, and the e2e suite proves it.
+
+- **The web UI** is TypeScript in `ui/web`, built by esbuild into `ui/dist`, which is committed
+  and embedded (`go install` needs no Node). After changing `ui/web`, run
+  `cd ui && npm ci && npm run check && npm run build` and commit `ui/dist`; CI fails when it
+  differs from a fresh build. It reads only the control API and loads nothing from the network.
+- **MCP tools** answer JSON; a failure is `{ok: false, error, fix}`. A new tool needs a
+  description an agent can act on, a test in `mcpserver`, and a line in the README's MCP table.
 
 ## Before you send a change
 

@@ -6,12 +6,15 @@
 
 <p align="center"><em>An understudy learns the lead's part and plays it exactly when asked.</em></p>
 
+<p align="center">
+  <img src="docs/screenshots/hero-divergence.png" width="900" alt="The understudy web UI: a session whose test result did not fit the script, with what the script expected beside what the request carried">
+</p>
+
 A small, exact, scriptable fake of the Anthropic Messages API, so the **real** Claude Code CLI
 can run end to end with only the model faked. Claude Code reads and edits real files, runs real
 commands, retries and streams its `stream-json` output as it always does; understudy plays the
 model from a script. Use it for deterministic tests of agent factories, harnesses and anything
 else that drives `claude -p`.
-
 
 - **Exact wire**: the SSE event sequence of the real API (`message_start` with the full message
   and usage, `content_block_start/delta/stop` for text, thinking with `signature_delta`, tool use
@@ -32,7 +35,12 @@ else that drives `claude -p`.
   proxy) into a script, then replay it with a strict or lenient divergence policy.
 - **Go library and test helper**: start the server inside `go test`, load scripts, drive the real
   CLI, assert on the request log, release gates, move a virtual clock.
-- One dependency (`gopkg.in/yaml.v3`), Apache-2.0.
+- **Web UI**: sessions and their state, each conversation with the step that answered every
+  request, divergences with what was expected beside what came, gates to release, the script
+  with the steps that ran, live.
+- **MCP server** (`understudy mcp`): agents write, check and load scripts, run the real CLI,
+  read the log, release gates and record transcripts through tools.
+- Two dependencies (`gopkg.in/yaml.v3` and the official MCP Go SDK), Apache-2.0.
 
 ## Quick start
 
@@ -49,11 +57,13 @@ sessions:
 YAML
 
 understudy validate hello.yaml
-understudy serve --script hello.yaml &          # http://127.0.0.1:8765
+understudy serve --script hello.yaml &          # http://127.0.0.1:8765, web UI at /_understudy/ui/
 eval "$(understudy env)"                        # ANTHROPIC_BASE_URL + a dummy key, nothing real
 claude -p --output-format stream-json --verbose "say hi" </dev/null
 understudy explain --url http://127.0.0.1:8765  # which step answered each request, and why
 ```
+
+Open <http://127.0.0.1:8765/_understudy/ui/> to watch it.
 
 `understudy env` prints `export`/`unset` lines: it points `ANTHROPIC_BASE_URL` at the server,
 sets a dummy `ANTHROPIC_API_KEY`, turns off telemetry and non-essential traffic, and removes any
@@ -187,6 +197,103 @@ func TestWriterSeat(t *testing.T) {
 (`UNDERSTUDY_CLAUDE` names another binary). The server alone is `server.New(server.Options{...})`,
 an `http.Handler`. See [examples/go/writer_test.go](examples/go/writer_test.go).
 
+## Web UI
+
+`understudy serve` answers a web UI at `/_understudy/ui/` on the same address (`--ui off` turns it
+off). It is a thin page over the control API below: no build step to run, nothing loaded from
+the network, assets embedded in the binary, live through Server-Sent Events.
+
+- **Sessions**: every session the script names or the log has seen, with its state: `idle`,
+  `waiting` (the client owes the next request), `streaming`, `stalled` (held at a gate, with a
+  Release button), `diverged` or `done`; its turn, the step that answered, and counts.
+- **A session** reads as a conversation: the prompt (Claude Code's system reminders folded), the
+  tool results each request carried, and what the script answered (thinking, text, tool calls
+  with their inputs, HTTP and in-stream errors, usage limits, stalls and cuts), each turn labelled
+  with the step and case that answered it. Retries of a refused request fold into one line.
+- **Divergences** are red, with what the script expected beside what the request carried and
+  every test that ran.
+- **Requests**: the whole log, filtered by text, session, outcome or divergences only, with a
+  detail pane (trace, tool results, earlier turns, headers).
+- **Gates** with who waits on them; **Script**: the loaded YAML, highlighted, with how many
+  requests each step answered (red where one diverged); Edit checks a new script as you type
+  and loads it.
+
+Keyboard: `1`-`4` switch views, `j`/`k` move, `Enter` opens, `Esc` goes back, `/` filters, `r`
+releases the gate of the selected session, `t` switches light and dark, `?` lists the keys.
+
+<p>
+  <img src="docs/screenshots/sessions.png" width="49%" alt="Sessions: one stalled at a gate with a Release button, one diverged, two done">
+  <img src="docs/screenshots/requests.png" width="49%" alt="Requests: the log with a diverged request open beside it">
+</p>
+<p>
+  <img src="docs/screenshots/conversation.png" width="49%" alt="A tool loop: the prompt, the Read and Edit calls the script made, and the results Claude Code sent back">
+  <img src="docs/screenshots/script.png" width="49%" alt="The loaded script, highlighted, with how many requests each step answered">
+</p>
+<p>
+  <img src="docs/screenshots/dark.png" width="64%" alt="The divergence view in dark mode">
+  <img src="docs/screenshots/mobile.png" width="22%" alt="A session held at a gate, on a 390 px wide phone">
+</p>
+
+The screenshots are real sessions of Claude Code 2.1.325 against `understudy serve`: a tool loop
+that edits a file, a test result no case expected, a 529 then the weekly limit, and a reviewer
+held at a gate (released from the UI, after which Claude Code printed the scripted verdict).
+
+## MCP
+
+`understudy mcp` is an MCP server over stdio for agents (built on the official
+[Go SDK](https://github.com/modelcontextprotocol/go-sdk)). It acts on the understudy server at
+`--url` (default `http://127.0.0.1:8765`) and starts one there when none answers
+(`--server auto`, the default; `attach` only uses a running one; `start` always starts one). A
+server it starts also has the web UI, and stops with it. `understudy serve` also answers MCP
+over streamable HTTP at `/_understudy/mcp` (`--mcp off` turns it off).
+
+| Tool | Does |
+|---|---|
+| `validate_script` | check a script (`yaml` or `file`) without loading it: `{ok, sessions, problems: [{path, line, rule, message, fix}]}` |
+| `load_script` | load a script into the server; one that does not check is refused with its problems |
+| `client_env` | the environment and command that run the real `claude -p` against the server, dummy credentials only (`session`, `auth: api_key \| gateway`) |
+| `list_sessions` | every session with its state, turn, step and counts, and the gates |
+| `read_log` | the request log, filtered by `session`, `outcome` (or `divergence`), `step`, `since_seq`, `limit`; `detail: summary \| full` |
+| `explain` | why each request got its answer, what a divergence expected and got; with `script_yaml` or `script_file`, what that script would choose instead |
+| `release_gate` | let requests held by `stall: {gate: NAME}` go on |
+| `reset` | forget the log, retry counts and gates; the script stays |
+| `record` | a real session's transcript into a script (`then: load` also loads it) |
+
+Resources: `understudy://docs/SCRIPTS.md` (the script guide) and
+`understudy://schema/understudy-v1.schema.json`. Every answer is JSON; a failed call is an error
+result `{ok: false, error, fix}`, with `problems` for a script that does not check and the shape
+of the arguments for arguments that do not fit.
+
+Claude Code (or `.mcp.json` in a project, with the same `command` and `args`):
+
+```sh
+claude mcp add understudy -- understudy mcp
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.understudy]
+command = "understudy"
+args = ["mcp"]
+```
+
+Cursor (`.cursor/mcp.json`), or any client that speaks streamable HTTP to a running
+`understudy serve`:
+
+```json
+{ "mcpServers": { "understudy": { "command": "understudy", "args": ["mcp"] } } }
+```
+
+```json
+{ "mcpServers": { "understudy": { "url": "http://127.0.0.1:8765/_understudy/mcp" } } }
+```
+
+The loop an agent runs: read the guide resource, write a script, `validate_script`,
+`load_script`, `client_env` for the session, run the command it gives in the working folder,
+then `list_sessions` and `read_log` with `outcome: divergence` (or `explain`) to see where the
+run left the script; fix it, `load_script`, `reset`, run again.
+
 ## Control API
 
 On the same address, under `/_understudy/`:
@@ -195,8 +302,12 @@ On the same address, under `/_understudy/`:
 |---|---|
 | `GET health` | `{ok, version, script_loaded}` |
 | `PUT script` (body: the YAML) | load a script; `400 {problems: [...]}` when it does not check |
-| `GET script` | the loaded script as YAML |
-| `GET requests[?session=KEY]` | the request log |
+| `GET script` | the loaded script, as it was written |
+| `GET script/info` | `{loaded, divergence, provenance, sessions: [{key, line, steps: [{name, line}]}]}` |
+| `POST validate` (body: the YAML) | `{ok, sessions, problems}` without loading it |
+| `GET sessions` | every session: `{key, state, turn, step, branch, requests, divergences, gate, ...}` |
+| `GET requests[?session=KEY]` | the request log: per request also the `prompt`, the `answer` sent, `held` while stalled, and `expected`/`actual` for a divergence |
+| `GET events` | Server-Sent Events: `change` with `{"version": N}` after every change of the log, gates or script |
 | `POST reset` | forget the log, attempt counts and gates (waiting requests are released) |
 | `GET gates`, `POST gates/NAME/release` | gates and who waits on them |
 | `GET clock`, `POST clock/advance {"ms": N}` | the virtual clock (`serve --clock virtual`) |
@@ -206,12 +317,17 @@ On the same address, under `/_understudy/`:
 ```sh
 go test -race ./...                  # unit and package tests, no network beyond loopback
 go test -tags e2e -v ./e2e           # drives the real claude CLI (skips if it is not installed)
+(cd ui && npm ci && npm run check && npm run build)   # the web UI: type-check and build into ui/dist
 ```
+
+The built UI (`ui/dist`) is committed so `go install` needs no Node; CI rebuilds it and fails when
+it differs from the sources (`ui/web`).
 
 The e2e suite covers text, a tool loop editing a real file, branching on a failing test, retry
 after 529, an in-stream error, close and reset mid-stream, a gated stall released by the test, the
-weekly and 5-hour limit messages, the system-prompt session marker, strict divergence, and record
-then replay (passing, then diverging).
+weekly and 5-hour limit messages, the system-prompt session marker, strict divergence, record
+then replay (passing, then diverging), and the MCP loop (load a script, run the CLI with
+`client_env`, find the divergence with `read_log`, fix, reset, run again).
 
 ### In an agent factory
 
@@ -229,6 +345,7 @@ machine. 19 requests, all served, none diverged.
 | Version | Platform | Result | Date |
 |---|---|---|---|
 | 2.1.325 | macOS 27 arm64 | e2e suite passes (11 tests) | 2026-11-18 |
+| 2.1.325 | macOS 27 arm64 | e2e suite passes (12 tests, with the MCP loop and the web UI's log fields) | 2026-11-18 |
 | 2.1.326 | Linux x86_64 | e2e suite passes (11 tests) | 2026-11-18 |
 | 2.1.325 | Linux arm64 microVMs on macOS | a full agent-factory practice run, 19 requests | 2026-11-18 |
 
@@ -242,6 +359,25 @@ real CLI. Round 1 (2026-11-18): Claude Opus and Claude Haiku each passed 4 of 5;
 Claude Code reports a lone `test -f` exiting 1 as a success. The guide now has a table of what
 Claude Code sends back for each tool; round 2: Claude Opus 5/5, Claude Haiku 5/5 and Codex
 (codex-cli 0.167.0) 5/5, each on the first try.
+
+### The MCP server, used by agents
+
+Fresh agents got this README and the MCP config (`understudy mcp --url ... --server attach`
+against their own `understudy serve`) and nothing else, on 2026-11-18, with Claude Code 2.1.325
+as the CLI under test:
+
+- **Find and fix a divergence**: script a check (`test -f done.txt || exit 1`) that the next step
+  expects to pass, run the real `claude -p` in a folder without the file, find the divergence
+  with the tools, fix the script to answer both outcomes, reset and run again until the result is
+  `NOT DONE` and the session is `done`. Claude Code (Opus) and Codex (codex-cli 0.167.0) each
+  passed on the first try (Claude used `read_log` with `outcome: divergence`, then `explain` with
+  the edited script before loading it; Codex used `explain`).
+- **Stall and release, then record**: hold a final answer at a gate, run the CLI in the
+  background, show the session `stalled` on the gate with `list_sessions`, `release_gate`, see
+  `APPROVED`, and `record` the run's transcript. Both passed on the first try.
+
+The server's own log after each run was checked, not only the agents' reports. Every run used
+the dummy credentials `client_env` gives.
 
 ## Learned from
 

@@ -14,19 +14,22 @@ import (
 
 // Explanation is one request, explained.
 type Explanation struct {
-	Seq        int      `json:"seq"`
-	Path       string   `json:"path"`
-	Session    string   `json:"session,omitempty"`
-	Source     string   `json:"session_source,omitempty"`
-	Turn       int      `json:"turn"`
-	Step       string   `json:"step,omitempty"`
-	Branch     string   `json:"branch,omitempty"`
-	Attempt    int      `json:"attempt,omitempty"`
-	Reply      string   `json:"reply,omitempty"`
-	Outcome    string   `json:"outcome"`
-	Divergence string   `json:"divergence,omitempty"`
-	Error      string   `json:"error,omitempty"`
-	Why        []string `json:"why,omitempty"`
+	Seq        int    `json:"seq"`
+	Path       string `json:"path"`
+	Session    string `json:"session,omitempty"`
+	Source     string `json:"session_source,omitempty"`
+	Turn       int    `json:"turn"`
+	Step       string `json:"step,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
+	Reply      string `json:"reply,omitempty"`
+	Outcome    string `json:"outcome"`
+	Divergence string `json:"divergence,omitempty"`
+	// Expected and Actual are, for a divergence, what the script wanted and what the request carried.
+	Expected []string `json:"expected,omitempty"`
+	Actual   []string `json:"actual,omitempty"`
+	Error    string   `json:"error,omitempty"`
+	Why      []string `json:"why,omitempty"`
 	// Reevaluated is set when a script was given: the choice it makes for the same request.
 	Reevaluated *Choice `json:"reevaluated,omitempty"`
 }
@@ -48,7 +51,7 @@ func Entries(entries []server.Entry, sc *script.Script) []Explanation {
 			continue
 		}
 		x := Explanation{Seq: e.Seq, Path: e.Path, Session: e.Session, Source: e.SessionSource, Turn: e.Turn, Step: e.Step, Branch: e.Branch,
-			Attempt: e.Attempt, Reply: e.Reply, Outcome: string(e.Outcome), Divergence: e.Divergence, Error: e.Error, Why: e.Trace}
+			Attempt: e.Attempt, Reply: e.Reply, Outcome: string(e.Outcome), Divergence: e.Divergence, Expected: e.Expected, Actual: e.Actual, Error: e.Error, Why: e.Trace}
 		if sc != nil && e.Session != "" {
 			if plan, ok := sc.Session(e.Session); ok {
 				h := make([][]script.Result, len(e.History))
@@ -84,6 +87,12 @@ func Write(w io.Writer, xs []Explanation) {
 		}
 		if x.Divergence != "" {
 			fmt.Fprintf(w, "    DIVERGED: %s\n", x.Divergence)
+			for _, l := range x.Expected {
+				fmt.Fprintf(w, "      expected: %s\n", l)
+			}
+			for _, l := range x.Actual {
+				fmt.Fprintf(w, "      actual:   %s\n", l)
+			}
 		}
 		if x.Error != "" && x.Error != "understudy: the request does not fit the script: "+x.Divergence {
 			fmt.Fprintf(w, "    sent: %s\n", x.Error)

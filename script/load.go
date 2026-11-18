@@ -72,6 +72,7 @@ func Parse(data []byte) (*Script, error) {
 	if len(ps) > 0 {
 		return nil, ps.sorted()
 	}
+	s.source = append([]byte(nil), data...)
 	return s, nil
 }
 

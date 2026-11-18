@@ -34,6 +34,9 @@ type Choice struct {
 	Divergence string
 	// Trace explains the choice: which tests ran and why they passed or failed.
 	Trace []string
+	// Expected is, when the request diverged, what the script wanted, one line per
+	// test that had to pass (or why no step could answer); nil when it fits.
+	Expected []string
 }
 
 // Steps is how many steps the session has.
@@ -70,6 +73,7 @@ func (p *SessionPlan) Choose(history [][]Result, policy Divergence) Choice {
 	if pos >= len(p.steps) {
 		last := p.steps[len(p.steps)-1]
 		ch.Divergence = fmt.Sprintf("the script of session %q has ended: its last step %q was answered, and the client asked for turn %d", p.key, last.name, n)
+		ch.Expected = []string{fmt.Sprintf("no turn after step %q: the session has %d step(s)", last.name, len(p.steps))}
 		if policy != Lenient {
 			ch.Trace = append(ch.Trace, "the script has ended")
 			return ch
@@ -85,6 +89,7 @@ func (p *SessionPlan) Choose(history [][]Result, policy Divergence) Choice {
 			ch.Divergence += "; "
 		}
 		ch.Divergence += d.divergence
+		ch.Expected = append(ch.Expected, d.expected...)
 	}
 	if d.br != nil {
 		ch.Attempts = d.br.attempts
@@ -98,6 +103,7 @@ type decision struct {
 	nextPos    int
 	divergence string
 	trace      []string
+	expected   []string
 }
 
 func (p *SessionPlan) decide(pos int, results []Result, policy Divergence) decision {
@@ -111,6 +117,7 @@ func (p *SessionPlan) decide(pos int, results []Result, policy Divergence) decis
 		} else {
 			d.trace = append(d.trace, fmt.Sprintf("%s expect %s: no, %s", where, st.expect.describe(), why))
 			d.divergence = fmt.Sprintf("%s expected %s, but %s", where, st.expect.describe(), why)
+			d.expected = append(d.expected, fmt.Sprintf("%s expect %s", where, st.expect.describe()))
 			if policy != Lenient {
 				return d
 			}
@@ -142,6 +149,9 @@ func (p *SessionPlan) decide(pos int, results []Result, policy Divergence) decis
 		return take(st.otherwise, BranchOtherwise)
 	}
 	div := fmt.Sprintf("%s: no case matched the tool results and the step has no otherwise", where)
+	for i, cs := range st.cases {
+		d.expected = append(d.expected, fmt.Sprintf("%s case %d when %s", where, i, cs.when.describe()))
+	}
 	if d.divergence != "" {
 		d.divergence += "; " + div
 	} else {

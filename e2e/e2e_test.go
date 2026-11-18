@@ -109,6 +109,15 @@ func TestToolLoopEditsRealFile(t *testing.T) {
 	if steps(es) != "read/served edit/served test/served judge/served" || es[3].Branch != "case 0" {
 		t.Fatalf("%s %+v", steps(es), es[3])
 	}
+	// The log keeps the conversation the web UI shows: the prompt, what was sent, the results.
+	if !strings.Contains(es[0].Prompt, "update the greeting") || es[0].Answer == nil || es[0].Answer.Calls[0].Tool != "Read" ||
+		!strings.Contains(string(es[0].Answer.Calls[0].Input), filepath.Join(dir, "greeting.txt")) || es[0].Answer.Thinking == "" ||
+		es[3].Answer.Kind != server.KindMessage || es[3].History[3][0].Tool != "Bash" {
+		t.Fatalf("%+v %+v", es[0], es[3].Answer)
+	}
+	if ss := f.Sessions(); len(ss) != 1 || ss[0].State != server.StateDone || ss[0].Requests != 4 {
+		t.Fatalf("%+v", ss)
+	}
 	t.Logf("claude %s: tool loop ok, file edited", o.Version)
 }
 
@@ -215,8 +224,11 @@ sessions:
 		t.Fatalf("finished while stalled: %+v", o)
 	case <-time.After(3 * time.Second):
 	}
-	if e := messages(f, "t1/reviewer"); e[0].Outcome != server.Pending {
-		t.Fatal(e[0].Outcome)
+	if e := messages(f, "t1/reviewer"); e[0].Outcome != server.Pending || e[0].Held == nil || e[0].Held.Gate != "review" {
+		t.Fatalf("%+v", e[0])
+	}
+	if ss := f.Sessions(); ss[0].State != server.StateStalled || ss[0].Gate != "review" {
+		t.Fatalf("%+v", ss)
 	}
 	if n := f.Release("review"); n != 1 {
 		t.Fatal(n)
@@ -224,6 +236,9 @@ sessions:
 	o := <-done
 	if o.Exit != 0 || o.Result != "CAUSE: WORK" {
 		t.Fatalf("%+v", o)
+	}
+	if ss := f.Sessions(); ss[0].State != server.StateDone || messages(f, "t1/reviewer")[0].Held != nil {
+		t.Fatalf("%+v", ss)
 	}
 }
 
@@ -284,9 +299,12 @@ sessions:
 		t.Fatalf("%+v\n%s", o.Result, steps(es))
 	}
 	for _, e := range es[1:] {
-		if e.Outcome != server.Diverged || e.Step != "after" {
-			t.Fatalf("%s", steps(es))
+		if e.Outcome != server.Diverged || e.Step != "after" || len(e.Expected) != 1 || !strings.Contains(e.Actual[0], "exit code 4") {
+			t.Fatalf("%s %+v", steps(es), e)
 		}
+	}
+	if ss := f.Sessions(); ss[0].State != server.StateDiverged || ss[0].Divergences != len(es)-1 {
+		t.Fatalf("%+v", ss)
 	}
 	t.Logf("claude %s: %d requests at the diverging turn", o.Version, len(es)-1)
 }
