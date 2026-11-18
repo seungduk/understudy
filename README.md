@@ -4,7 +4,7 @@
 
 <h1 align="center">understudy</h1>
 
-<p align="center"><em>An understudy learns the lead's part and plays it exactly when asked.</em></p>
+<p align="center"><b>Fake AI models for coding agents: save tokens and make agent tests deterministic.</b></p>
 
 ## What it is
 
