@@ -22,14 +22,15 @@ Your agent tests then need no API key, spend no tokens, and give the same result
 
 ## Example: test that the agent edits a file
 
-In [examples/2-edit-file.yaml](examples/2-edit-file.yaml), the fake model tells the agent to read `greeting.txt` and then replace "hello" with "goodbye". This Go test runs the real Claude Code against that script and checks the file on disk:
+In [examples/2-edit-file.yaml](examples/2-edit-file.yaml), the fake model tells the agent to read `greeting.txt` and then replace "hello" with "goodbye". This Go test runs the real Claude Code against a copy of that script in `testdata/edit.yaml` and checks the file on disk:
 
 ```go
 func TestAgentEditsTheFile(t *testing.T) {
-	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml")) // a copy of examples/2-edit-file.yaml
+	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml"))
 	dir := us.TempDir(t, map[string]string{"greeting.txt": "hello world\n"})
 
-	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer", Prompt: "Change the greeting to goodbye."})
+	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer",
+		Prompt: "Change the greeting to goodbye."})
 
 	got, _ := os.ReadFile(filepath.Join(dir, "greeting.txt"))
 	if run.Exit != 0 || string(got) != "goodbye world\n" {
@@ -60,9 +61,9 @@ sessions:
 YAML
 
 understudy serve --script hello.yaml &         # web UI at http://127.0.0.1:8765/_understudy/ui/
-eval "$(understudy env)"                       # Claude Code in this shell now talks to understudy, with a dummy key
+eval "$(understudy env)"                       # Claude Code in this shell now uses understudy
 claude -p "say hi" </dev/null                  # prints: Hello from the understudy.
-understudy explain --url http://127.0.0.1:8765 # shows which script step answered each request, and why
+understudy explain --url http://127.0.0.1:8765 # which script step answered each request, and why
 ```
 
 `understudy env` unsets your real Anthropic keys in this shell only; open a new shell to use the real model again. Scripts can also call tools, branch on command output, and return errors: see [SCRIPTS.md](SCRIPTS.md). `understudy validate FILE` checks a script and says how to fix each problem.

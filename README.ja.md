@@ -22,14 +22,15 @@ Claude Code や Codex などのコーディングエージェントは、リク�
 
 ## 例：エージェントがファイルを編集するかテストする
 
-[examples/2-edit-file.yaml](examples/2-edit-file.yaml) では、フェイクモデルがエージェントに `greeting.txt` を読ませ、続けて "hello" を "goodbye" に置き換えさせます。次の Go テストは、このスクリプトで本物の Claude Code を実行し、ディスク上のファイルを確かめます。
+[examples/2-edit-file.yaml](examples/2-edit-file.yaml) では、フェイクモデルがエージェントに `greeting.txt` を読ませ、続けて "hello" を "goodbye" に置き換えさせます。次の Go テストは、このスクリプトを `testdata/edit.yaml` にコピーしたうえで本物の Claude Code を実行し、ディスク上のファイルを確かめます。
 
 ```go
 func TestAgentEditsTheFile(t *testing.T) {
-	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml")) // examples/2-edit-file.yaml のコピー
+	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml"))
 	dir := us.TempDir(t, map[string]string{"greeting.txt": "hello world\n"})
 
-	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer", Prompt: "Change the greeting to goodbye."})
+	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer",
+		Prompt: "Change the greeting to goodbye."})
 
 	got, _ := os.ReadFile(filepath.Join(dir, "greeting.txt"))
 	if run.Exit != 0 || string(got) != "goodbye world\n" {
@@ -60,9 +61,9 @@ sessions:
 YAML
 
 understudy serve --script hello.yaml &         # Web UI: http://127.0.0.1:8765/_understudy/ui/
-eval "$(understudy env)"                       # このシェルの Claude Code がダミーキーで understudy に接続
+eval "$(understudy env)"                       # このシェルの Claude Code が understudy を使う
 claude -p "say hi" </dev/null                  # 出力: Hello from the understudy.
-understudy explain --url http://127.0.0.1:8765 # 各リクエストにどのスクリプトステップが答えたかを理由付きで表示
+understudy explain --url http://127.0.0.1:8765 # 各リクエストに答えたステップとその理由
 ```
 
 `understudy env` が本物の Anthropic キーを外すのはこのシェルの中だけです。本物のモデルに戻すには新しいシェルを開いてください。スクリプトではツールを呼び出したり、コマンドの出力で分岐したり、エラーを返したりもできます。[SCRIPTS.md](SCRIPTS.md) を参照してください。`understudy validate FILE` はスクリプトを検査し、問題ごとに直し方を示します。

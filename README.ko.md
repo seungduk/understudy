@@ -22,14 +22,15 @@ Claude Code나 Codex 같은 코딩 에이전트는 요청 하나하나를 HTTP A
 
 ## 예제: 에이전트가 파일을 고치는지 테스트하기
 
-[examples/2-edit-file.yaml](examples/2-edit-file.yaml)에서 가짜 모델은 에이전트에게 `greeting.txt`를 읽게 한 뒤 "hello"를 "goodbye"로 바꾸게 합니다. 아래 Go 테스트는 이 스크립트로 실제 Claude Code를 실행하고, 디스크의 파일을 확인합니다.
+[examples/2-edit-file.yaml](examples/2-edit-file.yaml)에서 가짜 모델은 에이전트에게 `greeting.txt`를 읽게 한 뒤 "hello"를 "goodbye"로 바꾸게 합니다. 아래 Go 테스트는 이 스크립트를 `testdata/edit.yaml`에 복사해 두고 실제 Claude Code를 실행한 뒤, 디스크의 파일을 확인합니다.
 
 ```go
 func TestAgentEditsTheFile(t *testing.T) {
-	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml")) // examples/2-edit-file.yaml의 사본
+	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml"))
 	dir := us.TempDir(t, map[string]string{"greeting.txt": "hello world\n"})
 
-	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer", Prompt: "Change the greeting to goodbye."})
+	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer",
+		Prompt: "Change the greeting to goodbye."})
 
 	got, _ := os.ReadFile(filepath.Join(dir, "greeting.txt"))
 	if run.Exit != 0 || string(got) != "goodbye world\n" {
@@ -60,9 +61,9 @@ sessions:
 YAML
 
 understudy serve --script hello.yaml &         # 웹 UI: http://127.0.0.1:8765/_understudy/ui/
-eval "$(understudy env)"                       # 이 셸의 Claude Code가 더미 키로 understudy에 접속
+eval "$(understudy env)"                       # 이 셸의 Claude Code가 understudy를 사용
 claude -p "say hi" </dev/null                  # 출력: Hello from the understudy.
-understudy explain --url http://127.0.0.1:8765 # 요청마다 어느 스크립트 단계가 답했는지, 그 이유와 함께 출력
+understudy explain --url http://127.0.0.1:8765 # 요청마다 답한 스크립트 단계와 그 이유
 ```
 
 `understudy env`는 이 셸에서만 실제 Anthropic 키를 지웁니다. 실제 모델을 다시 쓰려면 새 셸을 여세요. 스크립트로 도구를 호출하고, 명령 출력에 따라 분기하고, 에러를 돌려줄 수도 있습니다. [SCRIPTS.md](SCRIPTS.md)를 보세요. `understudy validate FILE`은 스크립트를 검사하고 문제마다 고치는 방법을 알려 줍니다.

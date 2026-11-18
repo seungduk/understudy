@@ -22,14 +22,15 @@ Claude Code、Codex 等编程智能体会通过 HTTP API 把每个请求发给 A
 
 ## 示例：测试智能体是否改了文件
 
-在 [examples/2-edit-file.yaml](examples/2-edit-file.yaml) 中，假模型让智能体先读取 `greeting.txt`，再把 "hello" 换成 "goodbye"。下面的 Go 测试用这份脚本运行真实的 Claude Code，并检查磁盘上的文件：
+在 [examples/2-edit-file.yaml](examples/2-edit-file.yaml) 中，假模型让智能体先读取 `greeting.txt`，再把 "hello" 换成 "goodbye"。下面的 Go 测试把这份脚本复制到 `testdata/edit.yaml`，用它运行真实的 Claude Code，并检查磁盘上的文件：
 
 ```go
 func TestAgentEditsTheFile(t *testing.T) {
-	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml")) // examples/2-edit-file.yaml 的副本
+	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml"))
 	dir := us.TempDir(t, map[string]string{"greeting.txt": "hello world\n"})
 
-	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer", Prompt: "Change the greeting to goodbye."})
+	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer",
+		Prompt: "Change the greeting to goodbye."})
 
 	got, _ := os.ReadFile(filepath.Join(dir, "greeting.txt"))
 	if run.Exit != 0 || string(got) != "goodbye world\n" {
@@ -60,9 +61,9 @@ sessions:
 YAML
 
 understudy serve --script hello.yaml &         # Web UI：http://127.0.0.1:8765/_understudy/ui/
-eval "$(understudy env)"                       # 当前 shell 中的 Claude Code 用假密钥连接 understudy
+eval "$(understudy env)"                       # 当前 shell 中的 Claude Code 改用 understudy
 claude -p "say hi" </dev/null                  # 输出：Hello from the understudy.
-understudy explain --url http://127.0.0.1:8765 # 显示每个请求由哪个脚本步骤回答，以及原因
+understudy explain --url http://127.0.0.1:8765 # 每个请求由哪个脚本步骤回答，以及原因
 ```
 
 `understudy env` 只在当前 shell 中清除你真实的 Anthropic 密钥；要重新使用真实模型，请打开一个新 shell。脚本还可以调用工具、根据命令输出分支、返回错误，详见 [SCRIPTS.md](SCRIPTS.md)。`understudy validate FILE` 会检查脚本，并对每个问题给出修改方法。
