@@ -48,9 +48,11 @@ sboms:
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
-# The notes come from CHANGELOG.md (the release workflow passes --release-notes).
+# The release notes are the tag's CHANGELOG.md section: the release workflow
+# passes them with --release-notes, which replaces the generated changelog.
+# (changelog.disable would drop those notes too.)
 changelog:
-  disable: true
+  sort: asc
 
 release:
   github:

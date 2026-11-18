@@ -7,6 +7,11 @@ release may change the Go API or the command line; each such change is listed he
 
 ## [Unreleased]
 
+### Fixed
+
+- The release workflow puts the tag's CHANGELOG section into the GitHub Release notes again;
+  for v0.1.0 they were set by hand.
+
 ## [0.1.0] - 2026-11-19
 
 The first release.
