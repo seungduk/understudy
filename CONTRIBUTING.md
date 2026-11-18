@@ -37,6 +37,6 @@ go test -tags e2e -v ./e2e   # when you touched the wire, the server or the help
 
 Add the Claude Code version you ran the e2e suite with to the table in docs/harnesses.md.
 
-## Licence
+## License
 
 By contributing you agree that your contribution is licensed under Apache-2.0.
