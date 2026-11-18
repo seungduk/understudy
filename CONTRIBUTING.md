@@ -17,14 +17,14 @@ Thanks for helping. understudy stays small and exact; changes are welcome when t
   allow, failure cases included. No network beyond loopback in unit tests. `go test -race ./...`
   must pass.
 - **Wire facts are measured.** Anything about what Claude Code sends or does is measured against
-  a named CLI version and recorded in the README, and the e2e suite proves it.
+  a named CLI version and recorded in docs/ (docs/limits.md, docs/harnesses.md), and the e2e suite proves it.
 
 - **The web UI** is TypeScript in `ui/web`, built by esbuild into `ui/dist`, which is committed
   and embedded (`go install` needs no Node). After changing `ui/web`, run
   `cd ui && npm ci && npm run check && npm run build` and commit `ui/dist`; CI fails when it
   differs from a fresh build. It reads only the control API and loads nothing from the network.
 - **MCP tools** answer JSON; a failure is `{ok: false, error, fix}`. A new tool needs a
-  description an agent can act on, a test in `mcpserver`, and a line in the README's MCP table.
+  description an agent can act on, a test in `mcpserver`, and a line in the MCP table in docs/mcp.md.
 
 ## Before you send a change
 
@@ -35,7 +35,7 @@ go test -race ./...
 go test -tags e2e -v ./e2e   # when you touched the wire, the server or the helper, with claude installed
 ```
 
-Add the Claude Code version you ran the e2e suite with to the README table.
+Add the Claude Code version you ran the e2e suite with to the table in docs/harnesses.md.
 
 ## Licence
 

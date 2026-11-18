@@ -2,6 +2,7 @@
 import { api, BASE, OUTCOMES, type Clock, type Entry, type Gate, type Health, type Problem, type ScriptInfo, type Session } from "./api";
 import { h, plural, replace, time, type Child } from "./dom";
 import { yaml } from "./highlight";
+import { handle, restoreWidths } from "./resize";
 import { answer, divergence, held, outcomeBadge, pill, prompt, sessionLine, stepLabel, toolResult, STATE_HELP } from "./render";
 
 // ---- state -----------------------------------------------------------------
@@ -155,7 +156,7 @@ const app = document.getElementById("app")!;
 const header = h("header.top");
 const nav = h("nav.tabs", { "aria-label": "views" });
 const main = h("main.main", { id: "main", tabindex: "-1" });
-app.append(header, h("div.body", nav, main), h("div.toast", { id: "toast", role: "status", "aria-live": "polite" }));
+app.append(header, h("div.body", nav, handle("nav"), main), h("div.toast", { id: "toast", role: "status", "aria-live": "polite" }));
 
 function renderHeader(): void {
   const hl = S.health;
@@ -166,12 +167,12 @@ function renderHeader(): void {
     h("a.brand", { href: "#/sessions", "aria-label": "understudy home" },
       h("img", { src: "logo.svg", alt: "", width: 22, height: 22 }), h("span", "understudy"),
       hl ? h("span.ver", hl.version) : null),
-    h("div.chips",
+    h("div.facts",
       S.info.loaded
-        ? h("a.chip.ok", { href: "#/script", title: "the loaded script checks" }, "script ", h("b", plural(S.info.sessions?.length || 0, "session")), ` · ${plural(steps, "step")}`)
-        : h("a.chip.warn", { href: "#/script" }, "no script loaded"),
-      S.clock ? h("span.chip", { title: "the server's clock" }, S.clock.mode === "virtual" ? `virtual ${time(S.clock.now)}` : "real clock") : null,
-      h(`span.chip.live.${S.live}`, { title: "live updates from " + BASE + "events" }, h("span.dot"), S.live)),
+        ? h("a.fact", { href: "#/script", title: "the loaded script checks" }, "script ", h("b", plural(S.info.sessions?.length || 0, "session")), `, ${plural(steps, "step")}`)
+        : h("a.fact.warn", { href: "#/script" }, "no script loaded"),
+      S.clock ? h("span.fact", { title: "the server's clock" }, S.clock.mode === "virtual" ? `virtual ${time(S.clock.now)}` : "real clock") : null,
+      h(`span.fact.live.${S.live}`, { title: "live updates from " + BASE + "events" }, h("span.dot"), S.live)),
     h("div.actions",
       resetBtn,
       h("button.btn.icon", { type: "button", title: "Light or dark (t)", "aria-label": "toggle theme", onclick: toggleTheme }, "◐"),
@@ -417,7 +418,7 @@ function requestsView(r: Route): void {
   replace(main,
     h("div.toolbar", h("h1", "Requests"), h("span.muted", `${list.length} of ${S.requests.length}`)),
     filterBox,
-    h("div.split" + (pane ? ".has-detail" : ""), h("div.list", table), pane));
+    h("div.split" + (pane ? ".has-detail" : ""), h("div.list", table), pane ? handle("detail") : null, pane));
   if (pane) pane.scrollTop = 0;
 }
 
@@ -529,7 +530,7 @@ function scriptView(): void {
         }
       });
     }
-    replace(main, head, h("div.editwrap", box, problemsPane()));
+    replace(main, head, h("div.editwrap", box, handle("problems"), problemsPane()));
     if (!ta) box.focus();
     return;
   }
@@ -550,6 +551,7 @@ function scriptView(): void {
           h("a.mono", { href: "#L" + (o.line || 1), onclick: (ev: Event) => jump(ev, o.line) }, o.key),
           h("ol", o.steps.map((st) => h("li", h("a", { href: "#L" + (st.line || 1), onclick: (ev: Event) => jump(ev, st.line) }, st.name,
             counts.get(st.line || 0) ? h("span.hits" + (hits.get(st.line || 0) === "l-bad" ? ".bad" : ""), String(counts.get(st.line || 0))) : null))))))),
+      handle("outline"),
       code));
 }
 
@@ -687,6 +689,7 @@ main.addEventListener("click", (ev) => {
 // ---- start -------------------------------------------------------------------
 
 applyTheme(store("understudy-theme"));
+restoreWidths();
 window.addEventListener("hashchange", () => {
   if (route().view !== "requests") filterBox = null;
   render();

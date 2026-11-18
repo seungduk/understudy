@@ -222,7 +222,7 @@ type StreamError struct {
 // Limit answers as an account's usage limit does, in each protocol's own form
 // (Anthropic: a 429 with the unified rate-limit headers; OpenAI: a 429
 // usage_limit_reached; Gemini: a 429 RESOURCE_EXHAUSTED with quota details).
-// See the README for what each harness shows.
+// See docs/limits.md for what each harness shows.
 type Limit struct {
 	Window          Window `yaml:"window" json:"window"`
 	ResetsInSeconds int    `yaml:"resets_in_seconds" json:"resets_in_seconds"`
