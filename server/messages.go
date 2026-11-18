@@ -234,13 +234,14 @@ func (s *Server) generate(c protocol.Codec, w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if out.Kind == protocol.OutReply {
+	switch out.Kind {
+	case protocol.OutReply:
 		outLen := len(out.Reply.Text) + len(out.Reply.Thinking)
 		for _, cl := range out.Reply.Calls {
 			outLen += len(cl.Input) + len(cl.Raw)
 		}
 		meta.Usage.Output = core.EstimateTokens(outLen)
-	} else if out.Kind == protocol.OutStreamError {
+	case protocol.OutStreamError:
 		meta.Usage.Output = core.EstimateTokens(len(out.Partial))
 	}
 	e := c.Encode(meta, out)

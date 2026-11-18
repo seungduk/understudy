@@ -1,8 +1,3 @@
-// Package core is the protocol-neutral model understudy runs on. A Request is
-// a conversation of turns made of parts (text, thinking, tool calls, tool
-// results); a Reply is what the fake model answers. Errors and usage limits
-// are closed enums. core knows no wire protocol and no harness: protocol
-// packages translate to and from it, harness profiles map tools onto it.
 package core
 
 import (

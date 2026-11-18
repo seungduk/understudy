@@ -7,6 +7,13 @@
 <p align="center"><b>A fake AI model for coding agents: save tokens and make agent tests deterministic.</b></p>
 
 <p align="center">
+  <a href="https://pkg.go.dev/github.com/seungduk/understudy"><img src="https://pkg.go.dev/badge/github.com/seungduk/understudy.svg" alt="Go Reference"></a>
+  <a href="https://github.com/seungduk/understudy/actions/workflows/ci.yml"><img src="https://github.com/seungduk/understudy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/seungduk/understudy/releases/latest"><img src="https://img.shields.io/github/v/release/seungduk/understudy?sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/seungduk/understudy" alt="License: Apache-2.0"></a>
+</p>
+
+<p align="center">
   <b>English</b> | <a href="README.ko.md">한국어</a> | <a href="README.ja.md">日本語</a> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
@@ -41,16 +48,33 @@ func TestAgentEditsTheFile(t *testing.T) {
 
 `us` is `github.com/seungduk/understudy/understudytest` (add it with `go get github.com/seungduk/understudy/understudytest@latest`). The test is skipped when `claude` is not installed. [docs/go.md](docs/go.md) shows the same for the other agents.
 
-## Requirements
+## Install
 
-- Go 1.25 or later. There are no prebuilt binaries yet.
-- The agent you test, installed and on your `PATH`. The quick start uses Claude Code (`claude`).
+Download the archive for your system (Linux, macOS or Windows; amd64 or arm64) from the
+[latest release](https://github.com/seungduk/understudy/releases/latest), unpack it, and put `understudy` on your `PATH`. For example, on a Mac
+with Apple silicon:
+
+```sh
+curl -fsSL https://github.com/seungduk/understudy/releases/download/v0.1.0/understudy_0.1.0_darwin_arm64.tar.gz | tar -xz understudy
+./understudy version    # prints: understudy v0.1.0 (commit ...)
+```
+
+Each release lists the SHA-256 sums of its archives in `understudy_<version>_checksums.txt`
+(check with `shasum -a 256 -c understudy_0.1.0_checksums.txt --ignore-missing`). If macOS
+refuses to open a binary downloaded with a browser, run `xattr -d com.apple.quarantine understudy`.
+
+Or build it with Go 1.25 or later:
+
+```sh
+go install github.com/seungduk/understudy/cmd/understudy@latest
+```
+
+You also need the agent you test, installed and on your `PATH`. The quick start uses Claude Code
+(`claude`).
 
 ## Quick start
 
 ```sh
-go install github.com/seungduk/understudy/cmd/understudy@latest
-
 cat > hello.yaml <<'YAML'
 schema: understudy/v1
 sessions:
@@ -118,7 +142,7 @@ understudy explain --url http://127.0.0.1:8765 # which script step answered each
 - [Faults and limits](docs/limits.md): what each agent did under API errors, stalls, and usage limits, as measured
 - [Record and replay](docs/recording.md) · [Go library](docs/go.md) · [Control API](docs/control-api.md)
 - [Web UI](docs/web-ui.md) · [MCP server](docs/mcp.md) · [Testing](docs/testing.md) · [Architecture](docs/ARCHITECTURE.md)
-- [Credits and references](docs/credits.md) · [Contributing](CONTRIBUTING.md)
+- [Credits and references](docs/credits.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md)
 
 ## License
 

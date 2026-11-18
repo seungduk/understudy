@@ -15,6 +15,7 @@ import (
 
 	understudy "github.com/seungduk/understudy"
 	"github.com/seungduk/understudy/control"
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/script"
 	"github.com/seungduk/understudy/server"
 )
@@ -135,7 +136,7 @@ func TestListsToolsAndResources(t *testing.T) {
 		t.Fatalf("tools %q", names)
 	}
 	init := r.cs.InitializeResult()
-	if !strings.Contains(init.Instructions, GuideURI) || init.ServerInfo.Version != server.Version {
+	if !strings.Contains(init.Instructions, GuideURI) || init.ServerInfo.Version != version.String() {
 		t.Fatalf("%+v", init)
 	}
 	for uri, want := range map[string]string{GuideURI: understudy.ScriptsGuide, SchemaURI: string(script.SchemaJSON)} {
@@ -330,7 +331,7 @@ func TestSessionsLogExplainReleaseReset(t *testing.T) {
 
 func TestRecord(t *testing.T) {
 	r := newRig(t)
-	tr, _ := filepath.Abs("../record/testdata/toolloop-2.1.325.jsonl")
+	tr, _ := filepath.Abs("../../record/testdata/toolloop-2.1.325.jsonl")
 	out, isErr := r.call("record", map[string]any{"transcript_file": tr, "session": "t1/writer"})
 	if isErr || out["steps"].(float64) < 2 || out["cli_version"] != "2.1.325" || out["loaded"] != false || !strings.Contains(out["yaml"].(string), "t1/writer:") {
 		t.Fatal(out)

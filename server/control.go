@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/script"
 )
 
 func (s *Server) controlRoutes() {
 	p := ControlPrefix
 	s.mux.HandleFunc("GET "+p+"health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"ok": true, "version": Version, "script_loaded": s.script.Load() != nil})
+		writeJSON(w, 200, map[string]any{"ok": true, "version": version.String(), "script_loaded": s.script.Load() != nil})
 	})
 	s.mux.HandleFunc("PUT "+p+"script", s.putScript)
 	s.mux.HandleFunc("GET "+p+"script", s.getScript)

@@ -1,0 +1,21 @@
+# golangci-lint v2: https://golangci-lint.run
+version: "2"
+run:
+  build-tags: [e2e]
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - misspell
+    - unconvert
+  exclusions:
+    presets: [std-error-handling]
+    rules:
+      # Tests ignore errors their next assertion catches anyway.
+      - path: _test\.go
+        linters: [errcheck]
+      # The codecs return the real APIs' error messages word for word,
+      # capitals and full stops included.
+      - path: internal/protocol/
+        text: ST1005
+formatters:
+  enable: [gofmt]

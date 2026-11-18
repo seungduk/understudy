@@ -1,0 +1,42 @@
+name: Bug report
+description: understudy did something it should not, or did not do what the docs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A script and the commands that show the problem make it fastest to fix.
+        Security problems go to https://github.com/seungduk/understudy/security/advisories/new instead.
+  - type: input
+    id: version
+    attributes:
+      label: understudy version
+      description: The output of `understudy version`.
+      placeholder: understudy v0.1.0 (commit 0123456789ab)
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Agent and its version
+      description: The agent you ran against understudy, if any, and its version (for example `claude --version`).
+      placeholder: Claude Code 2.1.325
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 26 arm64, Ubuntu 24.04 amd64, ...
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: The script (YAML), the commands you ran, and the output. `understudy explain --url URL` output helps too.
+      render: text
+    validations:
+      required: true

@@ -1,5 +1,3 @@
-// Package understudy holds the documents the tools serve: the script guide and
-// the README, embedded so a built binary carries them.
 package understudy
 
 import _ "embed"

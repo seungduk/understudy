@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/script"
 	"github.com/seungduk/understudy/server"
 )
@@ -47,7 +48,7 @@ func TestNewRefusesNonURLs(t *testing.T) {
 func TestEveryCall(t *testing.T) {
 	ctx := context.Background()
 	c, s := setup(t)
-	if h, err := c.Health(ctx); err != nil || !h.OK || h.ScriptLoaded || h.Version != server.Version {
+	if h, err := c.Health(ctx); err != nil || !h.OK || h.ScriptLoaded || h.Version != version.String() {
 		t.Fatal(h, err)
 	}
 	if _, err := c.Script(ctx); !errors.Is(err, ErrNoScript) {
@@ -122,7 +123,7 @@ func TestErrors(t *testing.T) {
 			w.Write([]byte("<html>"))
 			return
 		}
-		http.Error(w, "nope", 418)
+		http.Error(w, "nope", http.StatusTeapot)
 	}))
 	defer notUS.Close()
 	c, _ := New(notUS.URL, nil)

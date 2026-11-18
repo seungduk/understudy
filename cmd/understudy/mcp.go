@@ -17,9 +17,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/seungduk/understudy/control"
-	"github.com/seungduk/understudy/mcpserver"
+	"github.com/seungduk/understudy/internal/mcpserver"
+	"github.com/seungduk/understudy/internal/ui"
 	"github.com/seungduk/understudy/server"
-	"github.com/seungduk/understudy/ui"
 )
 
 // serverMode is how understudy mcp finds the understudy server its tools act on.

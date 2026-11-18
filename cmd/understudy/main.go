@@ -1,5 +1,3 @@
-// Command understudy runs the fake model API (Anthropic Messages, OpenAI Chat
-// Completions and Responses, Gemini) and its tools.
 package main
 
 import (
@@ -7,8 +5,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/script"
-	"github.com/seungduk/understudy/server"
 )
 
 func main() {
@@ -67,7 +65,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = stdout.Write(script.SchemaJSON)
 		return 0
 	case "version":
-		fmt.Fprintln(stdout, "understudy", server.Version)
+		fmt.Fprintln(stdout, version.Get().Line())
 		return 0
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage())

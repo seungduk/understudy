@@ -32,7 +32,9 @@ layers that know as little as possible about each other:
 
 Every arrow points down. `internal/layers` checks the table on every
 `go test ./...` (and so in CI): a package may import only the packages its
-row lists.
+row lists. `mcpserver` and `ui` live under `internal/` (with `internal/version`,
+the build's version): only the command uses them, so they are not part of the
+Go API.
 
 ## The layers
 

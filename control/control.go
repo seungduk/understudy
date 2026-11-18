@@ -1,5 +1,3 @@
-// Package control is a client of a running understudy server's control API
-// (the endpoints under /_understudy/). Every error says what to do next.
 package control
 
 import (

@@ -1,10 +1,3 @@
-// Package understudytest runs an understudy server inside a Go test and
-// drives the real Claude Code CLI against it.
-//
-//	fake := understudytest.Start(t, understudytest.ScriptFile("testdata/fix.yaml"))
-//	run := understudytest.Claude(t, fake, understudytest.Run{Dir: dir, Session: "t1/writer", Prompt: "fix it"})
-//	if run.Result != "Tests pass." { ... }
-//	fake.Requests() // the request log
 package understudytest
 
 import (

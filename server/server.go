@@ -1,7 +1,3 @@
-// Package server is the fake Anthropic Messages API: an http.Handler that
-// answers POST /v1/messages from a script, plus the endpoints Claude Code also
-// calls and a control API. Use it in-process from Go tests, or through the
-// understudy command.
 package server
 
 import (
@@ -19,9 +15,6 @@ import (
 	"github.com/seungduk/understudy/internal/reqlog"
 	"github.com/seungduk/understudy/script"
 )
-
-// Version is this build's version.
-const Version = "0.1.0"
 
 // ControlPrefix is where the control API lives on the same address.
 const ControlPrefix = "/_understudy/"

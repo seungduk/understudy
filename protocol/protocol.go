@@ -1,8 +1,3 @@
-// Package protocol is the one narrow interface every wire protocol implements:
-// decode an HTTP request into a core.Request, encode a core outcome into an
-// HTTP response (a JSON body or SSE frames), and, for recording, read a
-// response back. Implementations live in internal/protocol/<name>; the server
-// and the recorder use them only through Codec.
 package protocol
 
 import (
