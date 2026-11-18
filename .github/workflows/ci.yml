@@ -1,17 +1,25 @@
 name: ci
 on:
   push:
+    branches: [main] # other branches are tested by their pull request
   pull_request:
 permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, Go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        # The oldest Go that go.mod allows, and the newest release.
+        go: ["1.25.x", stable]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: stable
+          go-version: ${{ matrix.go }}
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet
@@ -22,18 +30,68 @@ jobs:
         run: go test -tags e2e -count=1 -run XXX ./e2e && go test -tags probe -count=1 -run XXX ./e2e
       - name: profiles and codecs (the contract every codec and profile keeps)
         run: go test -race -count=1 -v -run 'TestContract|TestProfilesWellFormed|TestReadResults|TestDetect' ./internal/protocol/... ./harness
+  test-macos:
+    name: test (${{ matrix.os }}, Go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      # One macOS runner at a time: a second queued macOS job gets cancelled.
+      max-parallel: 1
+      matrix:
+        os: [macos-latest]
+        go: ["1.25.x", stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet
+        run: go vet ./... && go vet -tags e2e ./e2e && go vet -tags probe ./e2e
+      - name: test
+        run: go test -race -count=1 ./...
+      - name: e2e compiles
+        run: go test -tags e2e -count=1 -run XXX ./e2e && go test -tags probe -count=1 -run XXX ./e2e
+      - name: profiles and codecs (the contract every codec and profile keeps)
+        run: go test -race -count=1 -v -run 'TestContract|TestProfilesWellFormed|TestReadResults|TestDetect' ./internal/protocol/... ./harness
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+  release-check:
+    name: release build (snapshot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: anchore/sbom-action/download-syft@v0 # syft writes the SBOMs
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
   ui:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ui
+        working-directory: internal/ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: internal/ui/package-lock.json
       - name: install
         run: npm ci
       - name: type-check
@@ -43,6 +101,6 @@ jobs:
       - name: the committed build matches the sources
         run: |
           git diff --exit-code -- dist || {
-            echo "ui/dist differs from a fresh build of ui/web. Fix: cd ui && npm ci && npm run build, then commit ui/dist"
+            echo "internal/ui/dist differs from a fresh build of internal/ui/web. Fix: cd internal/ui && npm ci && npm run build, then commit internal/ui/dist"
             exit 1
           }

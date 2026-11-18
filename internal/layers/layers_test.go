@@ -28,7 +28,8 @@ var allowed = map[string][]string{
 	// The module root (the embedded documents) and leaf utilities.
 	".":                     {},
 	"internal/notify":       {},
-	"ui":                    {},
+	"internal/ui":           {},
+	"internal/version":      {},
 	"internal/clock":        {},
 	"internal/gate":         {},
 	"internal/reqlog":       {},
@@ -52,17 +53,17 @@ var allowed = map[string][]string{
 	"internal/conv":    {"core", "harness", "script"},
 	"internal/deliver": {"internal/clock", "internal/gate", "internal/reqlog"},
 	// The top: protocol-agnostic server, recorder, control and tools.
-	"server":          {"core", "harness", "internal/clock", "internal/conv", "internal/deliver", "internal/gate", "internal/notify", "internal/protocol/registry", "internal/reqlog", "protocol", "script"},
-	"record":          {"core", "harness", "internal/conv", "internal/protocol/anthropic", "internal/protocol/registry", "protocol", "script"},
-	"explain":         {"script", "server"},
-	"control":         {"script", "server"},
-	"clienv":          {},
-	"understudytest":  {"clienv", "harness", "protocol", "script", "server"},
-	"mcpserver":       {".", "clienv", "control", "explain", "harness", "protocol", "record", "script", "server"},
-	"cmd/understudy":  {"clienv", "control", "core", "explain", "harness", "mcpserver", "protocol", "record", "script", "server", "ui"},
-	"internal/layers": {},
-	"e2e":             {},
-	"examples/go":     {},
+	"server":             {"core", "harness", "internal/clock", "internal/conv", "internal/deliver", "internal/gate", "internal/notify", "internal/protocol/registry", "internal/reqlog", "internal/version", "protocol", "script"},
+	"record":             {"core", "harness", "internal/conv", "internal/protocol/anthropic", "internal/protocol/registry", "protocol", "script"},
+	"explain":            {"script", "server"},
+	"control":            {"script", "server"},
+	"clienv":             {},
+	"understudytest":     {"clienv", "harness", "protocol", "script", "server"},
+	"internal/mcpserver": {".", "clienv", "control", "explain", "harness", "internal/version", "protocol", "record", "script", "server"},
+	"cmd/understudy":     {"clienv", "control", "core", "explain", "harness", "internal/mcpserver", "internal/ui", "internal/version", "protocol", "record", "script", "server"},
+	"internal/layers":    {},
+	"e2e":                {},
+	"examples/go":        {},
 }
 
 func TestLayers(t *testing.T) {

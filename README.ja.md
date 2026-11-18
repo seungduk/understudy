@@ -7,6 +7,13 @@
 <p align="center"><b>コーディングエージェントのためのフェイクAIモデル：トークンを節約し、エージェントのテストを毎回同じ結果にします。</b></p>
 
 <p align="center">
+  <a href="https://pkg.go.dev/github.com/seungduk/understudy"><img src="https://pkg.go.dev/badge/github.com/seungduk/understudy.svg" alt="Go Reference"></a>
+  <a href="https://github.com/seungduk/understudy/actions/workflows/ci.yml"><img src="https://github.com/seungduk/understudy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/seungduk/understudy/releases/latest"><img src="https://img.shields.io/github/v/release/seungduk/understudy?sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/seungduk/understudy" alt="License: Apache-2.0"></a>
+</p>
+
+<p align="center">
   <a href="README.md">English</a> | <a href="README.ko.md">한국어</a> | <b>日本語</b> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
@@ -43,7 +50,7 @@ func TestAgentEditsTheFile(t *testing.T) {
 
 ## 必要なもの
 
-- Go 1.25 以降。ビルド済みバイナリはまだありません。
+- [最新リリース](https://github.com/seungduk/understudy/releases/latest)のビルド済みバイナリ（Linux、macOS、Windows。amd64、arm64）、または Go 1.25 以降（`go install`）。
 - テストするエージェント。インストール済みで `PATH` にあること。クイックスタートでは Claude Code（`claude`）を使います。
 
 ## クイックスタート

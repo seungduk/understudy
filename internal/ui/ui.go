@@ -1,5 +1,5 @@
-// Package ui is understudy's web UI: static files built from ui/web (see
-// ui/package.json) into ui/dist and embedded here. It reads the control API
+// Package ui is understudy's web UI: static files built from internal/ui/web (see
+// internal/ui/package.json) into internal/ui/dist and embedded here. It reads the control API
 // under /_understudy/ of the same address and keeps no state of its own.
 package ui
 

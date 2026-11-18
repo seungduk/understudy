@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/script"
 	"github.com/seungduk/understudy/server"
 )
@@ -139,7 +140,7 @@ func TestMisc(t *testing.T) {
 	if c, o, _ := call("schema"); c != 0 || !strings.Contains(o, "2020-12") {
 		t.Fatal(c)
 	}
-	if c, o, _ := call("version"); c != 0 || !strings.Contains(o, server.Version) {
+	if c, o, _ := call("version"); c != 0 || !strings.Contains(o, version.String()) {
 		t.Fatal(c, o)
 	}
 	if c, o, _ := call("help"); c != 0 || !strings.Contains(o, "understudy serve") {

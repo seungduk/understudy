@@ -7,6 +7,13 @@
 <p align="center"><b>코딩 에이전트를 위한 가짜 AI 모델: 토큰을 아끼고, 에이전트 테스트가 매번 같은 결과를 내게 합니다.</b></p>
 
 <p align="center">
+  <a href="https://pkg.go.dev/github.com/seungduk/understudy"><img src="https://pkg.go.dev/badge/github.com/seungduk/understudy.svg" alt="Go Reference"></a>
+  <a href="https://github.com/seungduk/understudy/actions/workflows/ci.yml"><img src="https://github.com/seungduk/understudy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/seungduk/understudy/releases/latest"><img src="https://img.shields.io/github/v/release/seungduk/understudy?sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/seungduk/understudy" alt="License: Apache-2.0"></a>
+</p>
+
+<p align="center">
   <a href="README.md">English</a> | <b>한국어</b> | <a href="README.ja.md">日本語</a> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
@@ -43,7 +50,7 @@ func TestAgentEditsTheFile(t *testing.T) {
 
 ## 준비물
 
-- Go 1.25 이상. 미리 빌드한 바이너리는 아직 없습니다.
+- [최신 릴리스](https://github.com/seungduk/understudy/releases/latest)의 미리 빌드한 바이너리(Linux, macOS, Windows; amd64, arm64), 또는 Go 1.25 이상(`go install`).
 - 테스트할 에이전트. 설치되어 있고 `PATH`에 있어야 합니다. 빠른 시작에서는 Claude Code(`claude`)를 씁니다.
 
 ## 빠른 시작

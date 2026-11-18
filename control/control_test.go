@@ -3,12 +3,14 @@ package control
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/script"
 	"github.com/seungduk/understudy/server"
 )
@@ -47,7 +49,7 @@ func TestNewRefusesNonURLs(t *testing.T) {
 func TestEveryCall(t *testing.T) {
 	ctx := context.Background()
 	c, s := setup(t)
-	if h, err := c.Health(ctx); err != nil || !h.OK || h.ScriptLoaded || h.Version != server.Version {
+	if h, err := c.Health(ctx); err != nil || !h.OK || h.ScriptLoaded || h.Version != version.String() {
 		t.Fatal(h, err)
 	}
 	if _, err := c.Script(ctx); !errors.Is(err, ErrNoScript) {
@@ -69,6 +71,8 @@ func TestEveryCall(t *testing.T) {
 		req, _ := http.NewRequest("POST", c.URL()+"/v1/messages", strings.NewReader(`{"model":"m","stream":true,"messages":[{"role":"user","content":"x"}]}`))
 		req.Header.Set("X-Understudy-Session", "t1/w")
 		if r, err := http.DefaultClient.Do(req); err == nil {
+			// Read the whole reply: closing early would log the request as client_gone.
+			_, _ = io.Copy(io.Discard, r.Body)
 			r.Body.Close()
 		}
 	}()
@@ -122,7 +126,7 @@ func TestErrors(t *testing.T) {
 			w.Write([]byte("<html>"))
 			return
 		}
-		http.Error(w, "nope", 418)
+		http.Error(w, "nope", http.StatusTeapot)
 	}))
 	defer notUS.Close()
 	c, _ := New(notUS.URL, nil)

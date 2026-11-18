@@ -16,7 +16,7 @@ import (
 
 	"github.com/seungduk/understudy/clienv"
 	"github.com/seungduk/understudy/control"
-	"github.com/seungduk/understudy/mcpserver"
+	"github.com/seungduk/understudy/internal/mcpserver"
 	"github.com/seungduk/understudy/server"
 	us "github.com/seungduk/understudy/understudytest"
 )

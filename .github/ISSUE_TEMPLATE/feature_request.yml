@@ -1,0 +1,20 @@
+name: Feature request
+description: A harness, an API behaviour, a script feature or a tool understudy should have.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to test or do?
+      description: The agent test you are trying to write, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would solve it?
+      description: A script snippet, a command, or the real API behaviour understudy should copy (with the agent and API version you measured it on).
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What else did you try?

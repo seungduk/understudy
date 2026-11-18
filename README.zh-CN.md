@@ -7,6 +7,13 @@
 <p align="center"><b>面向编程智能体的假 AI 模型：节省 token，让智能体测试每次都得到相同的结果。</b></p>
 
 <p align="center">
+  <a href="https://pkg.go.dev/github.com/seungduk/understudy"><img src="https://pkg.go.dev/badge/github.com/seungduk/understudy.svg" alt="Go Reference"></a>
+  <a href="https://github.com/seungduk/understudy/actions/workflows/ci.yml"><img src="https://github.com/seungduk/understudy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/seungduk/understudy/releases/latest"><img src="https://img.shields.io/github/v/release/seungduk/understudy?sort=semver" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/seungduk/understudy" alt="License: Apache-2.0"></a>
+</p>
+
+<p align="center">
   <a href="README.md">English</a> | <a href="README.ko.md">한국어</a> | <a href="README.ja.md">日本語</a> | <b>简体中文</b>
 </p>
 
@@ -43,7 +50,7 @@ func TestAgentEditsTheFile(t *testing.T) {
 
 ## 前置条件
 
-- Go 1.25 或更高版本。目前还没有预编译的二进制文件。
+- [最新发布](https://github.com/seungduk/understudy/releases/latest)中的预编译二进制文件（Linux、macOS、Windows；amd64、arm64），或 Go 1.25 或更高版本（`go install`）。
 - 要测试的智能体，已安装并在 `PATH` 中。快速开始使用 Claude Code（`claude`）。
 
 ## 快速开始

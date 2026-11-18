@@ -207,7 +207,7 @@ sessions:
 `))
 			o := s.run(t, f, t.TempDir(), "t1/writer", "say hi")
 			es := scripted(t, f, "t1/writer")
-			if !strings.Contains(o.Stdout, "RECOVERED-AFTER-RETRY") || len(es) != 2 || es[0].Status != es[0].Status || es[1].Attempt != 2 {
+			if !strings.Contains(o.Stdout, "RECOVERED-AFTER-RETRY") || len(es) != 2 || es[0].Status < 500 || es[1].Attempt != 2 {
 				t.Fatalf("exit %d, %d requests\nstdout: %s\nstderr: %s", o.Exit, len(es), tail(o.Stdout, 2000), tail(o.Stderr, 2000))
 			}
 			t.Logf("%s %s over %s: retried after %d, then answered", s.id, o.Version, s.proto.Name(), es[0].Status)

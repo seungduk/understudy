@@ -1,10 +1,3 @@
-// Package harness is the agent harnesses understudy plays the model for, as
-// data: for each harness, the protocols it speaks, how a request shows it is
-// that harness, how each neutral action (shell, read, write, edit) becomes its
-// own tool call, how its tool results show errors and exit codes, where its
-// prompt names the working directory, which side requests it makes (titles,
-// routing) and how to point it at understudy. The code here only reads that
-// data; adding a harness is adding one profile file.
 package harness
 
 import (

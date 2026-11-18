@@ -2,13 +2,14 @@
 
 ```sh
 go test -race ./...                  # unit and package tests, no network beyond loopback
+golangci-lint run                    # lint (v2, .golangci.yml); CI runs it too
 go test -tags e2e -v ./e2e           # drives the real CLIs (each skips if it is not installed)
 UNDERSTUDY_HARNESS=codex,pi go test -tags e2e -run TestHarness -v ./e2e   # some harnesses only
-(cd ui && npm ci && npm run check && npm run build)   # the web UI: type-check and build into ui/dist
+(cd internal/ui && npm ci && npm run check && npm run build)   # the web UI: type-check and build into internal/ui/dist
 ```
 
-The built UI (`ui/dist`) is committed so `go install` needs no Node; CI rebuilds it and fails when
-it differs from the sources (`ui/web`).
+The built UI (`internal/ui/dist`) is committed so `go install` needs no Node; CI rebuilds it and
+fails when it differs from the sources (`internal/ui/web`).
 
 The e2e suite covers text, a tool loop editing a real file, branching on a failing test, retry
 after 529, an in-stream error, close and reset mid-stream, a gated stall released by the test, the

@@ -1,13 +1,3 @@
-// Package script is the understudy script format: YAML files (schema
-// understudy/v1) that say, per session, what the fake model replies at each turn.
-//
-// A File is the plain data an agent writes; Compile checks it and gives a
-// Script, the only form the server runs. Parse and Load read YAML (or JSON,
-// which is YAML too) and refuse unknown fields with fix-it problems.
-//
-// The engine is protocol- and harness-neutral: it reads tool results as
-// core-level Results and answers with Replies; the server turns those into
-// each protocol's wire format and each harness's tools.
 package script
 
 // The schema versions this package reads. v1 is the first format (Claude Code

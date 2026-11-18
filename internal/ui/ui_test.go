@@ -31,7 +31,7 @@ func TestServesTheBuild(t *testing.T) {
 	}
 	for _, c := range cases {
 		r, body := get(t, h, "GET", c.path)
-		if r.StatusCode != 200 && !(c.path == Prefix+"index.html" && r.StatusCode == 301) {
+		if r.StatusCode != 200 && (c.path != Prefix+"index.html" || r.StatusCode != 301) {
 			t.Errorf("%s: %d", c.path, r.StatusCode)
 			continue
 		}

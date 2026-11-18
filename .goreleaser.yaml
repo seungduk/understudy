@@ -1,0 +1,62 @@
+# GoReleaser v2: https://goreleaser.com
+# Release: push a tag vX.Y.Z on main; .github/workflows/release.yml runs this.
+# Try it locally: goreleaser release --snapshot --clean
+version: 2
+project_name: understudy
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: understudy
+    main: ./cmd/understudy
+    binary: understudy
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/seungduk/understudy/internal/version.version=v{{ .Version }}
+      - -X github.com/seungduk/understudy/internal/version.commit={{ .FullCommit }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: understudy
+    ids: [understudy]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+# The notes come from CHANGELOG.md (the release workflow passes --release-notes).
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: seungduk
+    name: understudy
+  draft: false
+  prerelease: auto
+  footer: |
+    Install with `go install github.com/seungduk/understudy/cmd/understudy@{{ .Tag }}`, or download the archive for your system below; `understudy_{{ .Version }}_checksums.txt` holds their SHA-256 sums.

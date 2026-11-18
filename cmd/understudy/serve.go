@@ -15,9 +15,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/seungduk/understudy/control"
-	"github.com/seungduk/understudy/mcpserver"
+	"github.com/seungduk/understudy/internal/mcpserver"
+	"github.com/seungduk/understudy/internal/ui"
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/server"
-	"github.com/seungduk/understudy/ui"
 )
 
 // MCPPath is where understudy serve answers MCP over streamable HTTP.
@@ -105,7 +106,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	hs := &http.Server{Handler: h}
-	fmt.Fprintf(stdout, "understudy %s listening on http://%s\n", server.Version, ln.Addr())
+	fmt.Fprintf(stdout, "understudy %s listening on http://%s\n", version.String(), ln.Addr())
 	if uiMode == on {
 		fmt.Fprintf(stdout, "  web UI: %s%s\n", selfURL(ln), ui.Prefix)
 	}

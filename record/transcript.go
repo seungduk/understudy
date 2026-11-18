@@ -1,7 +1,3 @@
-// Package record turns real Claude Code sessions into understudy scripts:
-// a stream-json transcript (FromTranscript) or live traffic through a
-// recording proxy (Proxy). Recorded scripts are ordinary scripts: agents read
-// and edit them like hand-written ones.
 package record
 
 import (

@@ -1,6 +1,3 @@
-// Package explain says, for each request of a log, which session, turn and
-// step answered it and why the other cases did not, optionally re-evaluated
-// against another script (to see what an edited script would do).
 package explain
 
 import (

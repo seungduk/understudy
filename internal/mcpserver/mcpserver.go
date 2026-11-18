@@ -24,6 +24,7 @@ import (
 	"github.com/seungduk/understudy/control"
 	"github.com/seungduk/understudy/explain"
 	"github.com/seungduk/understudy/harness"
+	"github.com/seungduk/understudy/internal/version"
 	"github.com/seungduk/understudy/protocol"
 	"github.com/seungduk/understudy/record"
 	"github.com/seungduk/understudy/script"
@@ -50,7 +51,7 @@ Workflow: read the resource ` + GuideURI + ` (the whole script format); write a 
 
 // New makes the MCP server with every tool and resource.
 func New(o Options) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "understudy", Title: "understudy", Version: server.Version}, &mcp.ServerOptions{Instructions: Instructions})
+	s := mcp.NewServer(&mcp.Implementation{Name: "understudy", Title: "understudy", Version: version.String()}, &mcp.ServerOptions{Instructions: Instructions})
 	t := &tools{c: o.Control, dir: o.Dir}
 	add(s, "validate_script", "Check an understudy script (YAML, schema understudy/v1) without loading it. Give yaml (the text) or file (a path). "+
 		"Answers {ok, sessions, problems: [{path, line, rule, message, fix}]}; ok false means fix each problem as its fix says, then validate again. "+

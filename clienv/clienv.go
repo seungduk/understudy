@@ -1,5 +1,3 @@
-// Package clienv is the environment that points the real Claude Code CLI at an
-// understudy server, with dummy credentials only.
 package clienv
 
 import (

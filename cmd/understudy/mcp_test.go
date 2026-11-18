@@ -14,8 +14,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/seungduk/understudy/internal/ui"
 	"github.com/seungduk/understudy/server"
-	"github.com/seungduk/understudy/ui"
 )
 
 type syncBuf struct {
