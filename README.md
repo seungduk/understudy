@@ -4,7 +4,7 @@
 
 <h1 align="center">understudy</h1>
 
-<p align="center"><b>Fake AI models for coding agents: save tokens and make agent tests deterministic.</b></p>
+<p align="center"><b>A fake AI model for coding agents: save tokens and make agent tests deterministic.</b></p>
 
 <p align="center">
   <b>English</b> | <a href="README.ko.md">한국어</a> | <a href="README.ja.md">日本語</a> | <a href="README.zh-CN.md">简体中文</a>
@@ -12,13 +12,38 @@
 
 ## What it is
 
-Coding agents communicate with language models over HTTP APIs. **understudy** mocks these model APIs using concise YAML scripts. You define what the model returns at each turn, point your agent at understudy, and let the real agent execute: it reads and edits files, runs commands, handles retries, and streams responses just like it does in production.
+Coding agents such as Claude Code and Codex send each request to an AI model over an HTTP API. **understudy** is a fake model: a local server that answers those requests from a short YAML script. You write what the fake model says at each step, point the agent at understudy, and then run your real agent. Only the model is fake: the agent reads and edits files, runs commands, retries, and streams replies as it always does.
 
-Because tests run without real models or API credentials, agent test suites execute quickly and produce deterministic results every time. understudy can also simulate HTTP errors, stalls, dropped connections, and rate limits, matching the exact payloads and status codes of real provider APIs.
+Your agent tests then need no API key, spend no tokens, and give the same result on every run. The fake model can also answer with HTTP errors, stalls, dropped connections, and usage limits, with the same error bodies and status codes the real APIs send. [docs/limits.md](docs/limits.md) shows what each agent did with each fault when we measured it.
 
 <p align="center">
-  <a href="docs/screenshots/hero-divergence.png"><img src="docs/screenshots/hero-divergence.png" width="880" alt="The web UI showing a session divergence: the actual request did not match any script case, displayed side-by-side with expected values"></a>
+  <a href="docs/screenshots/hero-divergence.png"><img src="docs/screenshots/hero-divergence.png" width="880" alt="The web UI showing a divergence: the request the agent sent did not match the script, shown beside what the script expected"></a>
 </p>
+
+## Example: test that the agent edits a file
+
+In [examples/2-edit-file.yaml](examples/2-edit-file.yaml), the fake model tells the agent to read `greeting.txt` and then replace "hello" with "goodbye". This Go test runs the real Claude Code against that script and checks the file on disk:
+
+```go
+func TestAgentEditsTheFile(t *testing.T) {
+	fake := us.Start(t, us.ScriptFile("testdata/edit.yaml")) // a copy of examples/2-edit-file.yaml
+	dir := us.TempDir(t, map[string]string{"greeting.txt": "hello world\n"})
+
+	run := us.Claude(t, fake, us.Run{Dir: dir, Session: "t1/writer", Prompt: "Change the greeting to goodbye."})
+
+	got, _ := os.ReadFile(filepath.Join(dir, "greeting.txt"))
+	if run.Exit != 0 || string(got) != "goodbye world\n" {
+		t.Fatalf("exit %d, greeting.txt is %q", run.Exit, got)
+	}
+}
+```
+
+`us` is `github.com/seungduk/understudy/understudytest` (add it with `go get github.com/seungduk/understudy/understudytest@latest`). The test is skipped when `claude` is not installed. [docs/go.md](docs/go.md) shows the same for the other agents.
+
+## Requirements
+
+- Go 1.25 or later. There are no prebuilt binaries yet.
+- The agent you test, installed and on your `PATH`. The quick start uses Claude Code (`claude`).
 
 ## Quick start
 
@@ -35,57 +60,64 @@ sessions:
 YAML
 
 understudy serve --script hello.yaml &         # web UI at http://127.0.0.1:8765/_understudy/ui/
-eval "$(understudy env)"                       # points Claude Code to understudy with dummy credentials
+eval "$(understudy env)"                       # Claude Code in this shell now talks to understudy, with a dummy key
 claude -p "say hi" </dev/null                  # prints: Hello from the understudy.
-understudy explain --url http://127.0.0.1:8765 # shows which step answered each request, and why
+understudy explain --url http://127.0.0.1:8765 # shows which script step answered each request, and why
 ```
 
-Scripts can also invoke tools, branch on command outputs, handle retries, and inject simulated errors: see [SCRIPTS.md](SCRIPTS.md) for the complete reference. Run `understudy validate FILE` to check your script and receive fix suggestions for any errors.
+`understudy env` unsets your real Anthropic keys in this shell only; open a new shell to use the real model again. Scripts can also call tools, branch on command output, and return errors: see [SCRIPTS.md](SCRIPTS.md). `understudy validate FILE` checks a script and says how to fix each problem.
 
-## Use with other harnesses
+## Words used here
 
-`understudy setup` generates configuration files in an isolated home directory and prints the command to run the harness against understudy with dummy credentials (pass `--session KEY` to specify a session name).
+- **Session**: one conversation in a script, named by a key such as `t1/writer`. The agent sends the key with each request; a request without one goes to the session `default`.
+- **Step**: one scripted answer. Step 1 answers the session's first request, step 2 the next one, and so on.
+- **Divergence**: a request the script did not expect. By default understudy answers it with an error and shows what the script expected beside what the agent sent.
+- **Gate**: a named pause. A step with `stall: {gate: NAME}` holds its answer until you release the gate.
 
-| Harness | Set up with |
+## Use with other agents
+
+`understudy setup` writes the agent's config files into an empty folder that becomes the agent's home (`./agent-home` below), then prints the command that runs the agent against understudy with a dummy key. Add `--session KEY` to choose the session.
+
+| Agent | Set up with |
 |---|---|
 | Claude Code | `eval "$(understudy env)"` |
-| OpenAI Codex CLI | `understudy setup --harness codex --home /tmp/h` |
-| opencode | `understudy setup --harness opencode --home /tmp/h` |
-| pi | `understudy setup --harness pi --home /tmp/h` |
-| Gemini CLI | `understudy setup --harness gemini-cli --home /tmp/h` |
-| Antigravity CLI | `understudy setup --harness antigravity --home /tmp/h` |
+| OpenAI Codex CLI | `understudy setup --harness codex --home ./agent-home` |
+| opencode | `understudy setup --harness opencode --home ./agent-home` |
+| pi | `understudy setup --harness pi --home ./agent-home` |
+| Gemini CLI | `understudy setup --harness gemini-cli --home ./agent-home` |
+| Antigravity CLI | `understudy setup --harness antigravity --home ./agent-home` |
 
-For supported wire protocols, generated configuration files, and tested CLI versions, see [docs/harnesses.md](docs/harnesses.md).
+[docs/harnesses.md](docs/harnesses.md) lists the API each agent speaks, the files `setup` writes, and the agent versions we tested.
 
 ## Web UI and MCP
 
-`understudy serve` hosts an interactive web UI at `/_understudy/ui/`. You can monitor active sessions, trace turns to the script steps that answered them, inspect unexpected divergences, interactively release gated stalls, and view loaded scripts in real time ([learn more](docs/web-ui.md)).
+`understudy serve` also serves a web UI at `/_understudy/ui/`. It shows each session's state, which step answered each request, each divergence, and the loaded script, and it has a button that releases a gate ([learn more](docs/web-ui.md)).
 
-`understudy mcp` provides these capabilities to AI agents via Model Context Protocol (MCP) tools: write and validate scripts, execute harnesses, inspect request logs, and release gates ([learn more](docs/mcp.md)).
+`understudy mcp` gives AI agents the same controls as Model Context Protocol (MCP) tools: they can write and check scripts, get the command that runs an agent against understudy, read the request log, and release gates ([learn more](docs/mcp.md)).
 
 <table>
   <tr>
-    <td width="50%" valign="top"><a href="docs/screenshots/sessions.png"><img src="docs/screenshots/sessions.png" width="100%" alt="Sessions: twelve sessions of a planner, writer, reviewer, and tester workflow, including a session stalled at a gate, a diverged session, and an active stream"></a><br><sub><b>Sessions</b>: Inspect session state, turns, steps, and counts; release paused gates.</sub></td>
-    <td width="50%" valign="top"><a href="docs/screenshots/requests.png"><img src="docs/screenshots/requests.png" width="100%" alt="Requests: log of 41 requests with a diverged request open side by side"></a><br><sub><b>Requests</b>: Browse the full request log and inspect detailed payload diffs side by side.</sub></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/sessions.png"><img src="docs/screenshots/sessions.png" width="100%" alt="Sessions: twelve sessions of a planner, writer, reviewer, and tester workflow, including a session held at a gate, a diverged session, and one that is streaming"></a><br><sub><b>Sessions</b>: each session's state, current step, and request counts; release a held gate here.</sub></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/requests.png"><img src="docs/screenshots/requests.png" width="100%" alt="Requests: log of 41 requests with a diverged request open beside it"></a><br><sub><b>Requests</b>: every request the agent sent; open one to see it beside what the script expected.</sub></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><a href="docs/screenshots/conversation.png"><img src="docs/screenshots/conversation.png" width="100%" alt="Session view: initial prompt, model thinking, scripted Read calls, and tool outputs from Claude Code"></a><br><sub><b>Session history</b>: Review prompts, scripted model responses, and client tool results.</sub></td>
-    <td width="50%" valign="top"><a href="docs/screenshots/script.png"><img src="docs/screenshots/script.png" width="100%" alt="Script view: syntax-highlighted YAML with request hit counts per step"></a><br><sub><b>Script view</b>: Browse the active YAML script with live hit counters for each step.</sub></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/conversation.png"><img src="docs/screenshots/conversation.png" width="100%" alt="Session view: initial prompt, model thinking, scripted Read calls, and tool outputs from Claude Code"></a><br><sub><b>Session history</b>: the prompt, the fake model's scripted answers, and the tool results the agent sent back.</sub></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/script.png"><img src="docs/screenshots/script.png" width="100%" alt="Script view: syntax-highlighted YAML with the number of requests each step answered"></a><br><sub><b>Script</b>: the loaded YAML script, with how many requests each step has answered.</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><a href="docs/screenshots/dark-mobile.png"><img src="docs/screenshots/dark-mobile.png" width="100%" alt="Dark mode and responsive mobile view showing a writer's fix loop and a reviewer paused at a gate"></a><br><sub><b>Mobile & Dark Mode</b>: Fully responsive interface with dark mode support.</sub></td>
+    <td colspan="2"><a href="docs/screenshots/dark-mobile.png"><img src="docs/screenshots/dark-mobile.png" width="100%" alt="Dark mode on a phone-width screen, showing a writer's fix loop and a reviewer waiting at a gate"></a><br><sub><b>Phone and dark mode</b>: the web UI also works on narrow screens and in dark mode.</sub></td>
   </tr>
 </table>
 
 ## Learn more
 
-- [SCRIPTS.md](SCRIPTS.md): Script format specification, schema reference, and complete examples
-- [Features](docs/features.md): Supported protocols, fault simulation, traffic recording, and Go test helpers
-- [Harnesses](docs/harnesses.md): Setup instructions for each harness and tested version matrix
-- [Faults and limits](docs/limits.md): Measured harness behavior under API errors, stalls, and rate limits
+- [SCRIPTS.md](SCRIPTS.md): the script format, every field, and worked examples
+- [Features](docs/features.md): APIs, faults, recording real traffic, and Go test helpers
+- [Agents](docs/harnesses.md): how to set up each agent, and the versions tested
+- [Faults and limits](docs/limits.md): what each agent did under API errors, stalls, and usage limits, as measured
 - [Record and replay](docs/recording.md) · [Go library](docs/go.md) · [Control API](docs/control-api.md)
 - [Web UI](docs/web-ui.md) · [MCP server](docs/mcp.md) · [Testing](docs/testing.md) · [Architecture](docs/ARCHITECTURE.md)
-- [Credits & references](docs/credits.md) · [Contributing](CONTRIBUTING.md)
+- [Credits and references](docs/credits.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
