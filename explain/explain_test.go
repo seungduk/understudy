@@ -31,6 +31,7 @@ func TestEntries(t *testing.T) {
 		{Seq: 1, Path: "/api/hello", Outcome: server.Other},
 		{Seq: 2, Path: "/v1/messages", Session: "s", SessionSource: "header", Turn: 1, Step: "judge", Branch: "none", Outcome: server.Diverged,
 			Divergence: "no case", Error: "understudy: the request does not fit the script: no case", Trace: []string{"case 0: no"},
+			Expected: []string{`step "judge" case 0 when {exit_code: 0}`}, Actual: []string{`result 0 (Bash): error, exit code 1: "Exit code 1"`},
 			History: [][]reqlog.Result{nil, {{Tool: "Bash", IsError: true, Text: "Exit code 1"}}}},
 		{Seq: 3, Path: "/v1/messages", Session: "zz", Outcome: server.NoScript, Error: "no session"},
 		{Seq: 4, Path: "/v1/messages", Session: "s", Outcome: server.Served, Step: "test", Branch: "reply", Attempt: 1, Reply: "tool_use"},
@@ -42,7 +43,7 @@ func TestEntries(t *testing.T) {
 	var b bytes.Buffer
 	Write(&b, xs)
 	out := b.String()
-	for _, want := range []string{"#2 /v1/messages session=\"s\" (header) turn=1", "DIVERGED: no case", "with the given script", "DIVERGES", "sent: no session", "outcome=served"} {
+	for _, want := range []string{"#2 /v1/messages session=\"s\" (header) turn=1", "DIVERGED: no case", "expected: step \"judge\" case 0", "actual:   result 0 (Bash): error, exit code 1", "with the given script", "DIVERGES", "sent: no session", "outcome=served"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}

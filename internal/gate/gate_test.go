@@ -80,3 +80,23 @@ func TestPreReleaseCancelReset(t *testing.T) {
 	s.Release("x")
 	s.Reset() // an opened gate is not closed twice
 }
+
+func TestOnChange(t *testing.T) {
+	var mu sync.Mutex
+	n := 0
+	s := New()
+	s.OnChange = func() { mu.Lock(); n++; mu.Unlock() }
+	count := func() int { mu.Lock(); defer mu.Unlock(); return n }
+	done := make(chan error)
+	go func() { done <- s.Wait(context.Background(), "g") }()
+	until(t, func() bool { return count() == 1 }) // started waiting
+	s.Release("g")                                // released
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	until(t, func() bool { return count() == 3 }) // passed
+	s.Reset()
+	if count() != 4 {
+		t.Fatal(count())
+	}
+}

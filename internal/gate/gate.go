@@ -10,8 +10,17 @@ import (
 
 // Set is a set of named gates, safe for concurrent use.
 type Set struct {
+	// OnChange, when set before first use, is called after a gate is seen, waited on, passed or released.
+	OnChange func()
+
 	mu    sync.Mutex
 	gates map[string]*state
+}
+
+func (s *Set) changed() {
+	if s.OnChange != nil {
+		s.OnChange()
+	}
 }
 
 type state struct {
@@ -48,6 +57,8 @@ func (s *Set) Wait(ctx context.Context, name string) error {
 	g.waiting++
 	open := g.open
 	s.mu.Unlock()
+	s.changed()
+	defer s.changed()
 	select {
 	case <-open:
 		s.mu.Lock()
@@ -66,19 +77,20 @@ func (s *Set) Wait(ctx context.Context, name string) error {
 // Release opens the gate for every present and later waiter, and says how many were waiting.
 func (s *Set) Release(name string) int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	g := s.get(name)
 	if !g.opened {
 		g.opened = true
 		close(g.open)
 	}
-	return g.waiting
+	n := g.waiting
+	s.mu.Unlock()
+	s.changed()
+	return n
 }
 
 // Reset releases every waiter and forgets every gate.
 func (s *Set) Reset() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, g := range s.gates {
 		if !g.opened {
 			g.opened = true
@@ -86,6 +98,8 @@ func (s *Set) Reset() {
 		}
 	}
 	s.gates = map[string]*state{}
+	s.mu.Unlock()
+	s.changed()
 }
 
 // Statuses lists every gate seen, by name.

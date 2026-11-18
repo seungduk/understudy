@@ -11,9 +11,23 @@ import (
 
 const mod = "github.com/seungduk/understudy/"
 
+// rel is a module package's path in the table: "." for the module root.
+func rel(imp string) (string, bool) {
+	if imp+"/" == mod {
+		return ".", true
+	}
+	if !strings.HasPrefix(imp, mod) {
+		return "", false
+	}
+	return strings.TrimPrefix(imp, mod), true
+}
+
 // allowed lists, per package, the module packages it may import (tests excluded).
 // Lower layers first; nothing may import a package listed below it.
 var allowed = map[string][]string{
+	".":                {}, // the module root: the embedded documents
+	"internal/notify":  {},
+	"ui":               {},
 	"internal/wire":    {},
 	"internal/clock":   {},
 	"internal/gate":    {},
@@ -22,25 +36,27 @@ var allowed = map[string][]string{
 	"script":           {"internal/wire"},
 	"internal/conv":    {"internal/wire", "script"},
 	"internal/deliver": {"internal/clock", "internal/gate", "internal/reqlog", "internal/wire"},
-	"server":           {"internal/clock", "internal/conv", "internal/deliver", "internal/gate", "internal/reqlog", "internal/wire", "script"},
+	"server":           {"internal/clock", "internal/conv", "internal/deliver", "internal/gate", "internal/notify", "internal/reqlog", "internal/wire", "script"},
 	"record":           {"internal/conv", "internal/wire", "script"},
 	"explain":          {"script", "server"},
+	"control":          {"script", "server"},
 	"understudytest":   {"clienv", "script", "server"},
-	"cmd/understudy":   {"clienv", "explain", "record", "script", "server"},
+	"mcpserver":        {".", "clienv", "control", "explain", "record", "script", "server"},
+	"cmd/understudy":   {"clienv", "control", "explain", "mcpserver", "record", "script", "server", "ui"},
 	"internal/layers":  {},
 	"e2e":              {},
 	"examples/go":      {},
 }
 
 func TestLayers(t *testing.T) {
-	out, err := exec.Command("go", "list", "-f", `{{.ImportPath}} {{join .Imports " "}}`, mod+"...").CombinedOutput()
+	out, err := exec.Command("go", "list", "-f", `{{.ImportPath}} {{join .Imports " "}}`, strings.TrimSuffix(mod, "/")+"/...").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.Fields(line)
-		pkg := strings.TrimPrefix(f[0], mod)
+		pkg, _ := rel(f[0])
 		seen[pkg] = true
 		ok, known := allowed[pkg]
 		if !known {
@@ -52,10 +68,10 @@ func TestLayers(t *testing.T) {
 			set[a] = true
 		}
 		for _, imp := range f[1:] {
-			if !strings.HasPrefix(imp, mod) {
+			dep, ok := rel(imp)
+			if !ok {
 				continue
 			}
-			dep := strings.TrimPrefix(imp, mod)
 			if !set[dep] {
 				t.Errorf("%s imports %s, which its layer does not allow", pkg, dep)
 			}

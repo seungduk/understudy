@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/seungduk/understudy/internal/clock"
 	"github.com/seungduk/understudy/internal/gate"
+	"github.com/seungduk/understudy/internal/notify"
 	"github.com/seungduk/understudy/internal/reqlog"
 	"github.com/seungduk/understudy/script"
 )
@@ -46,6 +48,12 @@ type Options struct {
 // Entry is one request of the log.
 type Entry = reqlog.Entry
 
+// Answer is what the server sent for a logged request.
+type Answer = reqlog.Answer
+
+// Hold is the stall a logged request waits in.
+type Hold = reqlog.Hold
+
 // Outcome is how a logged request ended.
 type Outcome = reqlog.Outcome
 
@@ -73,6 +81,7 @@ type Server struct {
 	log     reqlog.Log
 	script  atomic.Pointer[script.Script]
 	mux     *http.ServeMux
+	changes notify.Notifier
 
 	mu       sync.Mutex
 	attempts map[attemptKey]int
@@ -87,6 +96,8 @@ type attemptKey struct {
 // New makes a server.
 func New(o Options) *Server {
 	s := &Server{gates: gate.New(), attempts: map[attemptKey]int{}, models: map[string]bool{}}
+	s.gates.OnChange = s.changes.Bump
+	s.log.OnChange = s.changes.Bump
 	if o.Clock == VirtualClock {
 		start := o.Start
 		if start.IsZero() {
@@ -109,7 +120,10 @@ func New(o Options) *Server {
 func (s *Server) Handler() http.Handler { return s.mux }
 
 // Load replaces the script. Requests already being answered keep the old one.
-func (s *Server) Load(sc *script.Script) { s.script.Store(sc) }
+func (s *Server) Load(sc *script.Script) {
+	s.script.Store(sc)
+	s.changes.Bump()
+}
 
 // Script is the loaded script, nil when none is.
 func (s *Server) Script() *script.Script { return s.script.Load() }
@@ -136,6 +150,16 @@ func (s *Server) Reset() {
 	s.mu.Lock()
 	s.attempts = map[attemptKey]int{}
 	s.mu.Unlock()
+	s.changes.Bump()
+}
+
+// Version counts the changes to the log, the gates and the script so far; it
+// only grows. WaitChange waits for it to pass a value.
+func (s *Server) Version() uint64 { return s.changes.Version() }
+
+// WaitChange blocks until Version is greater than after (and gives it), or ctx ends.
+func (s *Server) WaitChange(ctx context.Context, after uint64) (uint64, error) {
+	return s.changes.Wait(ctx, after)
 }
 
 // ErrRealClock is returned by Advance on a server that runs on the real clock.

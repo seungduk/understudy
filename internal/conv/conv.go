@@ -55,6 +55,9 @@ type View struct {
 	// History[k] is the tool results before assistant turn k; len(History)-1 is the turn now asked for.
 	History [][]script.Result
 	CWD     string // "" when the request does not say
+	// Prompt is the text blocks of the newest user message, when no assistant turn follows it, joined
+	// by a blank line: the task at turn 0, and text sent along with tool results later.
+	Prompt string
 }
 
 var (
@@ -68,7 +71,31 @@ func Read(h http.Header, r wire.Request) View {
 	v.Key, v.KeySource, v.BadKey = key(h, r)
 	v.History = history(r)
 	v.CWD = cwd(r)
+	v.Prompt = prompt(r)
 	return v
+}
+
+func prompt(r wire.Request) string {
+	// The newest user message, unless the assistant has spoken since (system entries are skipped).
+	var last *wire.Message
+	for i := len(r.Messages) - 1; i >= 0 && last == nil; i-- {
+		switch r.Messages[i].Role {
+		case wire.Assistant:
+			return ""
+		case wire.User:
+			last = &r.Messages[i]
+		}
+	}
+	if last == nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range last.Blocks {
+		if b.Kind == wire.TextBlock && strings.TrimSpace(b.Text) != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func key(h http.Header, r wire.Request) (string, KeySource, string) {

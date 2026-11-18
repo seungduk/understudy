@@ -15,6 +15,8 @@ type Script struct {
 	file       File
 	divergence Divergence
 	sessions   map[string]*SessionPlan
+	source     []byte // the text it was parsed from; nil when compiled from a File
+	lines      lines
 }
 
 // SessionPlan is the checked steps of one session.
@@ -136,7 +138,7 @@ func compile(f File, ls lines) (*Script, Problems) {
 			}
 		}
 	}
-	s := &Script{file: f, divergence: div, sessions: map[string]*SessionPlan{}}
+	s := &Script{file: f, divergence: div, sessions: map[string]*SessionPlan{}, lines: c.ls}
 	if len(f.Sessions) == 0 {
 		c.add("sessions", RuleRequired, "the script has no sessions", "add 'sessions:' with at least one session, such as 'default:' with 'steps:'")
 	}
@@ -483,6 +485,36 @@ func (s *Script) Keys() []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// Source is the text the script was parsed from, or nil when it was compiled from a File.
+func (s *Script) Source() []byte { return append([]byte(nil), s.source...) }
+
+// SessionOutline is one session of a script with the line it starts at (0 when unknown).
+type SessionOutline struct {
+	Key   string        `json:"key"`
+	Line  int           `json:"line,omitempty"`
+	Steps []StepOutline `json:"steps"`
+}
+
+// StepOutline is one step of a session with the line it starts at (0 when unknown).
+type StepOutline struct {
+	Name string `json:"name"`
+	Line int    `json:"line,omitempty"`
+}
+
+// Outline is every session, sorted by key, with its steps in order.
+func (s *Script) Outline() []SessionOutline {
+	out := []SessionOutline{}
+	for _, k := range s.Keys() {
+		p := fmt.Sprintf("sessions[%q]", k)
+		so := SessionOutline{Key: k, Line: s.lines[p], Steps: []StepOutline{}}
+		for i, st := range s.sessions[k].steps {
+			so.Steps = append(so.Steps, StepOutline{Name: st.name, Line: s.lines[fmt.Sprintf("%s.steps[%d]", p, i)]})
+		}
+		out = append(out, so)
+	}
 	return out
 }
 

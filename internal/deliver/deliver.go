@@ -40,6 +40,8 @@ type Deps struct {
 	Gates *gate.Set
 	// OnStall is called when the reply starts to wait (for the log), may be nil.
 	OnStall func()
+	// OnResume is called when that wait ends, however it ends, may be nil.
+	OnResume func()
 }
 
 // Send writes p to w and says how the request ended.
@@ -50,6 +52,9 @@ func Send(ctx context.Context, w http.ResponseWriter, p Plan, d Deps) reqlog.Out
 		}
 		if d.OnStall != nil {
 			d.OnStall()
+		}
+		if d.OnResume != nil {
+			defer d.OnResume()
 		}
 		if p.StallGate != "" {
 			return d.Gates.Wait(ctx, p.StallGate) == nil

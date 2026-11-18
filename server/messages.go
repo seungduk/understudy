@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seungduk/understudy/internal/conv"
 	"github.com/seungduk/understudy/internal/deliver"
@@ -75,6 +76,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	s.log.Update(seq, func(e *Entry) {
 		e.Model, e.Stream, e.Session, e.SessionSource = req.Model, req.Stream, v.Key, v.KeySource.String()
 		e.Turn, e.ToolsOffered, e.CWD, e.History = len(v.History)-1, len(req.ToolNames), v.CWD, logHistory(v.History)
+		e.Prompt = cutText(v.Prompt, reqlog.MaxPromptText)
 	})
 	if v.BadKey != "" || v.Key == "" {
 		s.refuse(w, seq, reqlog.NoScript, wire.InvalidRequest, fmt.Sprintf(
@@ -98,6 +100,9 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	ch := plan.Choose(v.History, sc.Divergence())
 	s.log.Update(seq, func(e *Entry) {
 		e.Step, e.Branch, e.Divergence, e.Trace = ch.Step, ch.Branch, ch.Divergence, ch.Trace
+		if ch.Divergence != "" {
+			e.Expected, e.Actual = ch.Expected, actualOf(v.History[len(v.History)-1], ch.Turn)
+		}
 	})
 	if ch.Attempts == nil {
 		s.refuse(w, seq, reqlog.Diverged, wire.InvalidRequest, "understudy: the request does not fit the script: "+ch.Divergence)
@@ -107,17 +112,20 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	reply := ch.Attempts[min(n, len(ch.Attempts))-1]
 	rc := renderCtx{session: v.Key, turn: ch.Turn, step: ch.Step, attempt: n, model: req.Model, cwd: v.CWD,
 		offered: req.ToolNames, stream: req.Stream, inputTokens: wire.EstimateTokens(len(body)), now: s.clk.Now(), seq: seq}
-	p, kind, div := render(reply, rc)
-	s.log.Update(seq, func(e *Entry) { e.Attempt, e.Reply = n, kind })
-	if div != "" {
+	p, ans, div := render(reply, rc)
+	s.log.Update(seq, func(e *Entry) { e.Attempt, e.Reply, e.Answer = n, ans.Kind, &ans })
+	if div.text != "" {
 		s.log.Update(seq, func(e *Entry) {
 			if e.Divergence != "" {
 				e.Divergence += "; "
 			}
-			e.Divergence += div
+			e.Divergence += div.text
+			e.Expected = append(e.Expected, div.expected...)
+			e.Actual = append(e.Actual, div.actual...)
 		})
 		if sc.Divergence() != script.Lenient {
-			s.refuse(w, seq, reqlog.Diverged, wire.InvalidRequest, "understudy: the request does not fit the script: "+div)
+			s.log.Update(seq, func(e *Entry) { e.Answer = nil })
+			s.refuse(w, seq, reqlog.Diverged, wire.InvalidRequest, "understudy: the request does not fit the script: "+div.text)
 			return
 		}
 	}
@@ -125,8 +133,61 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	if p.Events != nil {
 		s.log.Update(seq, func(e *Entry) { e.Status = http.StatusOK })
 	}
-	out := deliver.Send(r.Context(), w, p, deliver.Deps{Clock: s.clk, Gates: s.gates})
+	hold := &reqlog.Hold{Gate: p.StallGate, Seconds: int(p.StallFor / time.Second)}
+	out := deliver.Send(r.Context(), w, p, deliver.Deps{Clock: s.clk, Gates: s.gates,
+		OnStall: func() {
+			s.log.Update(seq, func(e *Entry) {
+				h := *hold
+				h.Since = s.clk.Now().UTC().Format(time.RFC3339Nano)
+				e.Held = &h
+			})
+		},
+		OnResume: func() { s.log.Update(seq, func(e *Entry) { e.Held = nil }) },
+	})
 	s.log.Update(seq, func(e *Entry) { e.Outcome = out })
+}
+
+// cutText cuts t to at most n bytes, at a rune boundary.
+func cutText(t string, n int) string {
+	if len(t) <= n {
+		return t
+	}
+	for n > 0 && !utf8.RuneStart(t[n]) {
+		n--
+	}
+	return t[:n]
+}
+
+// MaxActualText is how much of each tool result an Actual line quotes.
+const MaxActualText = 300
+
+// actualOf describes the tool results a diverging request carried, one line each.
+func actualOf(rs []script.Result, turn int) []string {
+	if len(rs) == 0 {
+		if turn == 0 {
+			return []string{"the first request of the session: no tool results"}
+		}
+		return []string{fmt.Sprintf("turn %d carries no tool results", turn)}
+	}
+	out := make([]string, 0, len(rs))
+	for i, r := range rs {
+		name, how := r.Tool, "ok"
+		if name == "" {
+			name = "unknown tool"
+		}
+		if r.IsError {
+			how = "error"
+		}
+		if code, ok := script.ExitCode(r); ok && name == "Bash" {
+			how += fmt.Sprintf(", exit code %d", code)
+		}
+		t := strings.TrimSpace(r.Text)
+		if len(t) > MaxActualText {
+			t = cutText(t, MaxActualText) + "..."
+		}
+		out = append(out, fmt.Sprintf("result %d (%s): %s: %s", i, name, how, strconv.Quote(t)))
+	}
+	return out
 }
 
 func logHistory(h [][]script.Result) [][]reqlog.Result {
@@ -166,20 +227,38 @@ const (
 	KindLimit       = "limit"
 )
 
-// render turns a script reply into a delivery plan. div is non-empty when the
-// reply cannot be sent as written (a tool the client does not offer, {{cwd}}
-// without a working directory).
-func render(r script.Reply, c renderCtx) (p deliver.Plan, kind, div string) {
+// renderDiv is how a reply cannot be sent as written: in words, what the
+// script wanted and what the request had instead.
+type renderDiv struct {
+	text             string
+	expected, actual []string
+}
+
+// render turns a script reply into a delivery plan and the answer the log keeps.
+// div.text is non-empty when the reply cannot be sent as written (a tool the
+// client does not offer, {{cwd}} without a working directory).
+func render(r script.Reply, c renderCtx) (p deliver.Plan, ans reqlog.Answer, div renderDiv) {
 	p.Headers = http.Header{"Request-Id": {requestID(c.seq)}}
 	meta := wire.Meta{ID: c.id("msg_"), Model: c.model}
 	if s := r.Stall; s != nil {
 		p.StallFor, p.StallGate, p.StallMid = time.Duration(s.Seconds)*time.Second, s.Gate, s.At == script.MidStream
+		where := "before the response"
+		if p.StallMid {
+			where = "mid-stream"
+		}
+		if s.Gate != "" {
+			ans.Faults = append(ans.Faults, fmt.Sprintf("stall %s until gate %s is released", where, s.Gate))
+		} else {
+			ans.Faults = append(ans.Faults, fmt.Sprintf("stall %s for %d s", where, s.Seconds))
+		}
 	}
 	if ct := r.Cut; ct != nil {
 		p.Cut, p.CutAfter, p.CutReset = true, ct.AfterEvents, ct.How == script.Reset
+		ans.Faults = append(ans.Faults, fmt.Sprintf("cut (%s) after %d event(s)", ct.How, ct.AfterEvents))
 	}
 	if pc := r.Pace; pc != nil {
 		p.FirstDelay, p.Between = time.Duration(pc.FirstEventMS)*time.Millisecond, time.Duration(pc.BetweenEventsMS)*time.Millisecond
+		ans.Faults = append(ans.Faults, fmt.Sprintf("pace: first event after %d ms, %d ms between events", pc.FirstEventMS, pc.BetweenEventsMS))
 	}
 	var blocks []wire.OutBlock
 	stop := wire.EndTurn
@@ -190,14 +269,14 @@ func render(r script.Reply, c renderCtx) (p deliver.Plan, kind, div string) {
 	}
 	switch {
 	case r.Message != nil:
-		kind = KindMessage
+		ans.Kind, ans.Thinking, ans.Text, ans.Stop = KindMessage, r.Message.Thinking, r.Message.Text, string(script.EndTurn)
 		thinking(r.Message.Thinking)
 		blocks = append(blocks, wire.OutBlock{Kind: wire.OutText, Text: r.Message.Text})
 		if r.Message.Stop == script.MaxTokens {
-			stop = wire.MaxTokens
+			stop, ans.Stop = wire.MaxTokens, string(script.MaxTokens)
 		}
 	case r.ToolUse != nil:
-		kind = KindToolUse
+		ans.Kind, ans.Thinking, ans.Text, ans.Stop = KindToolUse, r.ToolUse.Thinking, r.ToolUse.Text, "tool_use"
 		stop = wire.ToolUse
 		thinking(r.ToolUse.Thinking)
 		if r.ToolUse.Text != "" {
@@ -218,22 +297,30 @@ func render(r script.Reply, c renderCtx) (p deliver.Plan, kind, div string) {
 			}
 			b, _ := json.Marshal(input)
 			blocks = append(blocks, wire.OutBlock{Kind: wire.OutToolUse, ID: c.id("toolu_", strconv.Itoa(i)), Name: call.Tool, Input: b})
+			ans.Calls = append(ans.Calls, reqlog.Call{Tool: call.Tool, Input: b})
 		}
 		if len(missing) > 0 {
 			names := append([]string(nil), c.offered...)
 			sort.Strings(names)
-			div = fmt.Sprintf("the script calls %s, which the client does not offer (it offers: %s)", strings.Join(missing, ", "), strings.Join(names, ", "))
+			div.text = fmt.Sprintf("the script calls %s, which the client does not offer (it offers: %s)", strings.Join(missing, ", "), strings.Join(names, ", "))
+			div.expected = append(div.expected, "the client offers the tool(s) "+strings.Join(missing, ", "))
+			div.actual = append(div.actual, "the client offers: "+strings.Join(names, ", "))
 		}
 		if len(needCWD) > 0 {
-			if div != "" {
-				div += "; "
+			if div.text != "" {
+				div.text += "; "
 			}
-			div += "the script uses {{cwd}} but the request does not say its working directory (no 'Primary working directory:' line)"
+			div.text += "the script uses {{cwd}} but the request does not say its working directory (no 'Primary working directory:' line)"
+			div.expected = append(div.expected, "a 'Primary working directory:' line for {{cwd}}")
+			div.actual = append(div.actual, "the request names no working directory")
 		}
 	case r.HTTPError != nil:
-		kind = KindHTTPError
 		e := r.HTTPError
 		k, _ := wire.ParseErrorKind(e.Error)
+		ans.Kind, ans.Error, ans.Message, ans.Retry = KindHTTPError, e.Error, e.Message, string(e.Retry)
+		if ans.Retry == "" {
+			ans.Retry = string(script.RetryDefault)
+		}
 		p.Status, p.Body = k.Status(), wire.ErrorBody(k, e.Message, requestID(c.seq))
 		if e.RetryAfterSeconds != nil {
 			p.Headers.Set("Retry-After", strconv.Itoa(*e.RetryAfterSeconds))
@@ -244,26 +331,26 @@ func render(r script.Reply, c renderCtx) (p deliver.Plan, kind, div string) {
 		case script.RetryAlways:
 			p.Headers.Set("X-Should-Retry", "true")
 		}
-		return p, kind, ""
+		return p, ans, renderDiv{}
 	case r.Limit != nil:
-		kind = KindLimit
+		ans.Kind, ans.Window, ans.ResetsInSeconds = KindLimit, string(r.Limit.Window), r.Limit.ResetsInSeconds
 		p.Status, p.Body = 429, wire.ErrorBody(wire.RateLimit, limitMessage(r.Limit.Window), requestID(c.seq))
 		for k, v := range LimitHeaders(r.Limit.Window, c.now, r.Limit.ResetsInSeconds) {
 			p.Headers.Set(k, v)
 		}
-		return p, kind, ""
+		return p, ans, renderDiv{}
 	case r.StreamError != nil:
-		kind = KindStreamError
 		e := r.StreamError
+		ans.Kind, ans.Error, ans.Message, ans.Text = KindStreamError, e.Error, e.Message, e.PartialText
 		k, _ := wire.ParseErrorKind(e.Error)
 		u := wire.Usage{Input: c.inputTokens, Output: wire.EstimateTokens(len(e.PartialText))}
 		if !c.stream {
 			// A non-streamed request cannot carry an in-stream error; send the same error as HTTP.
 			p.Status, p.Body = k.Status(), wire.ErrorBody(k, e.Message, requestID(c.seq))
-			return p, kind, ""
+			return p, ans, renderDiv{}
 		}
 		p.Events = wire.ErrorEvents(meta, u, e.PartialText, k, e.Message)
-		return p, kind, ""
+		return p, ans, renderDiv{}
 	}
 	outLen := 0
 	for _, b := range blocks {
@@ -275,7 +362,7 @@ func render(r script.Reply, c renderCtx) (p deliver.Plan, kind, div string) {
 	} else {
 		p.Status, p.Body = http.StatusOK, wire.MessageJSON(meta, blocks, stop, u)
 	}
-	return p, kind, div
+	return p, ans, div
 }
 
 // substitute replaces {{cwd}} in every string of v, and says whether it was used.
