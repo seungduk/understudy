@@ -162,7 +162,7 @@ func limitMessage(w core.Window) string {
 
 // LimitHeaders are the headers of a usage-limit 429 for window w, resetting at
 // resets. Measured against Claude Code 2.1.325: with these (and a gateway
-// token, see the README) it prints "You've hit your weekly limit". The windows
+// token, see docs/limits.md) it prints "You've hit your weekly limit". The windows
 // the unified headers do not have (per_minute, daily) are a plain rate limit
 // with retry-after; daily also says not to retry.
 func LimitHeaders(w core.Window, now, resets time.Time) map[string]string {

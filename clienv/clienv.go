@@ -16,7 +16,7 @@ const (
 	// Gateway sends a dummy, unsigned bearer token whose audience is claude-gateway.
 	// Claude Code then reads the unified rate-limit headers as it does for
 	// subscription accounts and prints "You've hit your weekly limit · resets ...".
-	// Measured with Claude Code 2.1.325; see the README.
+	// Measured with Claude Code 2.1.325; see docs/limits.md.
 	Gateway
 )
 
