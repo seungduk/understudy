@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -114,6 +115,8 @@ func (r *rig) post(session string, results ...string) *http.Response {
 	if err != nil {
 		r.t.Fatal(err)
 	}
+	// Read the whole reply: closing early would log the request as client_gone.
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	return resp
 }

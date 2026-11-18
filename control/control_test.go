@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,8 @@ func TestEveryCall(t *testing.T) {
 		req, _ := http.NewRequest("POST", c.URL()+"/v1/messages", strings.NewReader(`{"model":"m","stream":true,"messages":[{"role":"user","content":"x"}]}`))
 		req.Header.Set("X-Understudy-Session", "t1/w")
 		if r, err := http.DefaultClient.Do(req); err == nil {
+			// Read the whole reply: closing early would log the request as client_gone.
+			_, _ = io.Copy(io.Discard, r.Body)
 			r.Body.Close()
 		}
 	}()

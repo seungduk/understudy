@@ -1,6 +1,7 @@
 package understudytest
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ func TestStartWaitRelease(t *testing.T) {
 			done <- 0
 			return
 		}
+		_, _ = io.Copy(io.Discard, r.Body) // closing early would log the request as client_gone
 		r.Body.Close()
 		done <- r.StatusCode
 	}()
