@@ -10,8 +10,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         # The oldest Go that go.mod allows, and the newest release.
+        go: ["1.25.x", stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet
+        run: go vet ./... && go vet -tags e2e ./e2e && go vet -tags probe ./e2e
+      - name: test
+        run: go test -race -count=1 ./...
+      - name: e2e compiles
+        run: go test -tags e2e -count=1 -run XXX ./e2e && go test -tags probe -count=1 -run XXX ./e2e
+      - name: profiles and codecs (the contract every codec and profile keeps)
+        run: go test -race -count=1 -v -run 'TestContract|TestProfilesWellFormed|TestReadResults|TestDetect' ./internal/protocol/... ./harness
+  test-macos:
+    name: test (${{ matrix.os }}, Go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      # One macOS runner at a time: a second queued macOS job gets cancelled.
+      max-parallel: 1
+      matrix:
+        os: [macos-latest]
         go: ["1.25.x", stable]
     runs-on: ${{ matrix.os }}
     steps:
