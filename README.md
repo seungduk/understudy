@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="docs/logo/understudy-256.png" width="128" height="128" alt="understudy: a friendly orange character holding a script, with a dashed twin behind it">
+  <img src="docs/logo/understudy.svg" alt="understudy" width="160" height="160">
 </p>
+
 <h1 align="center">understudy</h1>
-<p align="center">A scriptable fake of the Anthropic Messages API, so the real Claude Code CLI runs end to end.</p>
+
+<p align="center"><em>An understudy learns the lead's part and plays it exactly when asked.</em></p>
 
 <p align="center">
   <img src="docs/screenshots/hero-divergence.png" width="900" alt="The understudy web UI: a session whose test result did not fit the script, with what the script expected beside what the request carried">
@@ -13,8 +15,6 @@ can run end to end with only the model faked. Claude Code reads and edits real f
 commands, retries and streams its `stream-json` output as it always does; understudy plays the
 model from a script. Use it for deterministic tests of agent factories, harnesses and anything
 else that drives `claude -p`.
-
-*An understudy learns the lead's part and plays it exactly when asked.*
 
 - **Exact wire**: the SSE event sequence of the real API (`message_start` with the full message
   and usage, `content_block_start/delta/stop` for text, thinking with `signature_delta`, tool use

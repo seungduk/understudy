@@ -39,4 +39,8 @@ jobs:
       - name: build
         run: npm run build
       - name: the committed build matches the sources
-        run: git diff --exit-code -- dist || { echo "ui/dist differs from a fresh build of ui/web. Fix: cd ui && npm ci && npm run build, then commit ui/dist"; exit 1; }
+        run: |
+          git diff --exit-code -- dist || {
+            echo "ui/dist differs from a fresh build of ui/web. Fix: cd ui && npm ci && npm run build, then commit ui/dist"
+            exit 1
+          }
